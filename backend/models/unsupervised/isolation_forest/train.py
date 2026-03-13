@@ -1,24 +1,22 @@
 """
 Main Isolation Forest Pipeline execution script.
-Refactored from monolithic isolation_forest.py.
+Refactored from monolithic train_isolation_forest.py.
 """
 import os
-import warnings
+import joblib
 
 # Local imports
 from data_loader import load_data
 from preprocessing import preprocess_features
-from model import IsolationForestModel, generate_tier_summary, assign_tier
+from model import IsolationForestModel, generate_tier_summary
 from evaluation import evaluate_predictions
-
-warnings.filterwarnings("ignore")
 
 # ──────────────────────────────────────────────────────────────────────
 # PATHS
 # ──────────────────────────────────────────────────────────────────────
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-# dataset is at backend/data/paysim.csv according to original root path logic
-DATA_PATH   = os.path.join(BASE_DIR, "..", "..", "..", "data", "raw", "paysim.csv")
+# dataset is at backend/data/raw/ewallet_transaction.csv
+DATA_PATH   = os.path.join(BASE_DIR, "..", "..", "..", "data", "raw", "ewallet_transaction.csv")
 
 OUT_MODEL   = os.path.join(BASE_DIR, "outputs", "model")
 OUT_PLOTS   = os.path.join(BASE_DIR, "outputs", "plots")
@@ -33,17 +31,20 @@ def main():
         df = load_data(DATA_PATH)
     except FileNotFoundError as e:
         print(f"Error loading dataset: {e}")
-        print("Please place paysim.csv at backend/data/raw/paysim.csv")
         return
 
     # STEP 2 & 3: PREPROCESSING & SCALING
-    X_scaled, df_filtered, y_true, fraud_rate = preprocess_features(df)
+    X, df_model, y_true, all_features, scaler = preprocess_features(df)
+
+    # Calculate actual contamination
+    fraud_rate = y_true.mean()
+    contamination = min(fraud_rate * 5, 0.10)
+    
+    print(f"True fraud rate:      {fraud_rate:.4f}")
+    print(f"Contamination used:   {contamination:.4f}")
+    print(f"Aggressive factor:    5x\n")
 
     # STEP 4: MODEL INIT & TRAINING
-    # Aggressive 5x multiplier on contamination (capped at 10%)
-    # Raw fraud_rate (~0.3%) is too conservative for Isolation Forest
-    contamination = min(fraud_rate * 5, 0.1)
-    print(f"Adjusted contamination: {contamination:.4f} (raw fraud rate {fraud_rate:.4f} × 5)\n")
     iso_model = IsolationForestModel(
         contamination=contamination,
         n_estimators=200,
@@ -52,31 +53,35 @@ def main():
     )
     
     # Fit and get predictions / risk scores
-    iso_preds, iso_risk_score = iso_model.fit_predict(X_scaled)
-
-    # Attach predictions back to dataframe
-    df_filtered["iso_risk_score"] = iso_risk_score
-    df_filtered["iso_prediction"] = iso_preds
+    iso_preds, iso_risk_score = iso_model.fit_predict(X)
 
     # STEP 5: RISK TIERING
-    df_filtered["risk_tier"] = df_filtered["iso_risk_score"].apply(assign_tier)
-    tier_summary = generate_tier_summary(df_filtered)
+    df_results = df[['transaction_id', 'is_fraud']].copy()
+    df_results['iso_risk_score'] = iso_risk_score
+    df_results['iso_prediction'] = iso_preds
+    df_results['risk_tier'] = df_results['iso_risk_score'].apply(iso_model.assign_tier)
 
-    print("\nRisk Tier Summary")
-    print(tier_summary.to_string())
+    tier_summary = generate_tier_summary(df_results)
+    print("\n=== RISK TIER SUMMARY ===")
+    print(tier_summary)
     print()
 
-    # STEP 6: EVALUATION (saves plots/txt/csv as well)
-    top10 = evaluate_predictions(y_true, iso_preds, df_filtered, OUT_PLOTS, OUT_RESULTS)
+    # STEP 6: EVALUATION
+    top10 = evaluate_predictions(y_true, iso_preds, df_results, df_model, all_features, OUT_PLOTS, OUT_RESULTS)
 
-    # STEP 7: SAVE MODEL & TIER SUMMARY
+    # STEP 7: SAVE OUTPUTS
     print("\n" + "=" * 60)
     print("STEP 7: SAVE OUTPUTS")
     print("=" * 60)
     
-    # Save Model
+    # Save Model & Scalers
     model_path = os.path.join(OUT_MODEL, "isolation_forest_model.pkl")
-    iso_model.save(model_path)
+    mms_path = os.path.join(OUT_MODEL, "minmax_scaler.pkl")
+    scaler_path = os.path.join(OUT_MODEL, "scaler.pkl")
+    
+    iso_model.save(model_path, mms_path)
+    joblib.dump(scaler, scaler_path)
+    print(f"Standard Scaler saved to: {scaler_path}")
     
     # Save Tier Summary
     tier_csv_path = os.path.join(OUT_RESULTS, "risk_tier_summary.csv")

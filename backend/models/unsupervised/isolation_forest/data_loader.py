@@ -1,9 +1,10 @@
 import pandas as pd
+import time
 import os
 
 def load_data(data_path: str) -> pd.DataFrame:
     """
-    Loads the PaySim dataset from the specified path and prints initial statistics.
+    Loads the e-wallet transaction dataset from the specified path.
     """
     print("=" * 60)
     print("STEP 1: LOAD DATA")
@@ -12,12 +13,14 @@ def load_data(data_path: str) -> pd.DataFrame:
     if not os.path.exists(data_path):
         raise FileNotFoundError(f"Dataset not found at: {data_path}")
 
+    print("Loading dataset...")
+    start = time.time()
     df = pd.read_csv(data_path)
-    
-    print(f"Dataset shape : {df.shape}")
-    print(f"Columns       : {list(df.columns)}")
-    print(f"Transaction types:\n{df['type'].value_counts()}")
-    print(f"\nisFraud distribution:\n{df['isFraud'].value_counts()}")
-    print(f"Overall fraud rate: {df['isFraud'].mean()*100:.4f}%\n")
+
+    print(f"Shape: {df.shape}")
+    print(f"Fraud cases: {df['is_fraud'].sum():,}")
+    print(f"Legit cases: {(df['is_fraud']==0).sum():,}")
+    print(f"Fraud rate: {df['is_fraud'].mean():.4f}")
+    print(f"Loaded in {time.time()-start:.1f}s\n")
     
     return df
