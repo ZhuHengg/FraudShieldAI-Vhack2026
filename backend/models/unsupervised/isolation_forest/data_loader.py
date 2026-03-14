@@ -1,6 +1,31 @@
 import pandas as pd
 import time
 import os
+from sklearn.model_selection import train_test_split
+
+def split_data(df: pd.DataFrame, test_size: float = 0.2, random_state: int = 42):
+    """
+    Splits the dataframe into training and testing sets, stratified by is_fraud.
+    """
+    print("\n" + "="*50)
+    print("BUILDING THE WALL — TRAIN/TEST SPLIT")
+    print("="*50)
+
+    df_train, df_test = train_test_split(
+        df,
+        test_size=test_size,
+        random_state=random_state,
+        stratify=df['is_fraud']
+    )
+
+    df_train = df_train.reset_index(drop=True)
+    df_test  = df_test.reset_index(drop=True)
+
+    print(f"Train: {len(df_train):,} records | Fraud: {df_train['is_fraud'].sum():,}")
+    print(f"Test:  {len(df_test):,} records  | Fraud: {df_test['is_fraud'].sum():,}")
+    print("Wall built — test set locked until evaluation\n")
+    
+    return df_train, df_test
 
 def load_data(data_path: str) -> pd.DataFrame:
     """

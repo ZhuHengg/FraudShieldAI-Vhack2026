@@ -21,47 +21,43 @@ class IsolationForestModel:
         self.approve_threshold = 0
         self.flag_threshold = 0
 
-    def fit_predict(self, X: np.ndarray):
+    def fit(self, X_train: np.ndarray):
         """
-        Fits the Isolation Forest, computes anomaly scores, predicts binary labels,
-        and generates 0-100 risk scores.
+        Fits the Isolation Forest and the MinMaxScaler based on training anomaly scores.
         """
         print("=" * 60)
         print("STEP 4: TRAIN ISOLATION FOREST")
         print("=" * 60)
 
         start = time.time()
-        self.model.fit(X)
-        print(f"Training complete in {time.time()-start:.1f}s\n")
+        self.model.fit(X_train)
+        print(f"Training complete in {time.time()-start:.1f}s")
 
-        print("Generating predictions and risk scores...")
+        # Fit MinMaxScaler on TRAIN scores
+        raw_scores_train = -self.model.decision_function(X_train)
+        self.mm_scaler.fit(raw_scores_train.reshape(-1, 1))
+        
+        # Calculate thresholds on TRAIN scores
+        risk_scores_train = self.mm_scaler.transform(raw_scores_train.reshape(-1, 1)).flatten()
+        self.approve_threshold = np.percentile(risk_scores_train, 85)
+        self.flag_threshold    = np.percentile(risk_scores_train, 95)
+        
+        print(f"MinMax Scaler fitted and thresholds established.\n")
+
+    def predict(self, X: np.ndarray):
+        """
+        Predicts binary labels and generates 0-100 risk scores for given data.
+        """
         # Raw predictions: -1 = anomaly (fraud), 1 = normal (legitimate)
         raw_preds = self.model.predict(X)
         iso_predictions = np.where(raw_preds == -1, 1, 0)
 
-        # Anomaly score: lower = more anomalous
-        # Invert so that higher score = more suspicious
+        # Anomaly score: higher score = more suspicious
         anomaly_scores = self.model.decision_function(X)
         inverted_scores = -anomaly_scores
 
-        print("=" * 60)
-        print("STEP 5: RISK SCORE TIERING")
-        print("=" * 60)
-
-        # 0-100 risk score
-        iso_risk_score = self.mm_scaler.fit_transform(inverted_scores.reshape(-1, 1)).flatten()
-
-        print(f"Risk score range: {iso_risk_score.min():.2f} to {iso_risk_score.max():.2f}")
-        print(f"Risk score mean:  {iso_risk_score.mean():.2f}")
-
-        # Percentile-based thresholds — adapts to actual score distribution
-        self.approve_threshold = np.percentile(iso_risk_score, 85)
-        self.flag_threshold    = np.percentile(iso_risk_score, 95)
-
-        print(f"\nThresholds:")
-        print(f"  Approve -> below {self.approve_threshold:.2f}")
-        print(f"  Flag    -> {self.approve_threshold:.2f} to {self.flag_threshold:.2f}")
-        print(f"  Block   -> above {self.flag_threshold:.2f}\n")
+        # 0-100 risk score using fitted scaler
+        iso_risk_score = self.mm_scaler.transform(inverted_scores.reshape(-1, 1)).flatten()
 
         return iso_predictions, iso_risk_score
 

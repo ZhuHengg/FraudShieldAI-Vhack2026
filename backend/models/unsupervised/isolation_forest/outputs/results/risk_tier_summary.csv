@@ -1,4 +1,4 @@
 risk_tier,transaction_count,fraud_count,fraud_rate
-Approve,1700000,16,0.0
-Block,100000,29804,0.298
-Flag,200000,180,0.0009
+Approve,340517,2,0.0
+Block,20018,5967,0.2981
+Flag,39465,31,0.0008
