@@ -1,18 +1,19 @@
 === BIAS DIAGNOSIS ===
 
 Features to WATCH (split freq > 8%):
-amount_vs_avg_ratio             0.113469
-session_duration_seconds        0.110240
-account_age_days                0.109125
-recipient_risk_profile_score    0.109010
-ip_risk_score                   0.107972
-transaction_hour                0.095672
+account_age_days                0.137231
+ip_risk_score                   0.131191
+amount_vs_avg_ratio             0.123988
+session_duration_seconds        0.118258
+transaction_hour                0.109158
+recipient_risk_profile_score    0.107803
 
 Features dominating EARLY splits (mean depth < 5):
-is_proxy_ip                     4.852362
-sender_account_fully_drained    4.919355
+sender_account_fully_drained    4.343750
+is_proxy_ip                     4.476712
+country_mismatch_suspicious     4.792373
 
 Features model CANNOT live without (top 3 permutation):
-is_new_device                  0.001713
-country_mismatch_suspicious    0.001341
-session_duration_seconds       0.001191
+is_new_device                  0.001082
+country_mismatch_suspicious    0.001010
+account_age_days               0.000964
