@@ -16,7 +16,7 @@ from evaluation import evaluate_predictions, analyze_bias, tune_threshold
 # PATHS
 # ──────────────────────────────────────────────────────────────────────
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-DATA_PATH   = os.path.join(BASE_DIR, "..", "..", "..", "data", "raw", "ewallet_transaction.csv")
+DATA_PATH   = os.path.join(BASE_DIR, "..", "..", "..", "data", "ewallet_transaction.csv")
 OUT_MODEL   = os.path.join(BASE_DIR, "outputs", "model")
 OUT_PLOTS   = os.path.join(BASE_DIR, "outputs", "plots")
 OUT_RESULTS = os.path.join(BASE_DIR, "outputs", "results")

@@ -14,6 +14,6 @@ is_proxy_ip                     4.476712
 country_mismatch_suspicious     4.792373
 
 Features model CANNOT live without (top 3 permutation):
-is_new_device                  0.001082
-country_mismatch_suspicious    0.001010
-account_age_days               0.000964
+is_new_device                  0.001050
+account_age_days               0.001021
+country_mismatch_suspicious    0.000966
