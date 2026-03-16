@@ -15,8 +15,7 @@ env/
 .env
 
 # Data (too large for git)
-data/raw/
-data/processed/
+data/
 
 # Model artifacts (too large for git)
 models/supervised/*.pkl

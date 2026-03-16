@@ -1,0 +1,24 @@
+Supervised LightGBM Pipeline
+==================================================
+
+LEAKAGE CONTROLS APPLIED:
+  Split:                  train(64%) / val(16%) / test(20%)
+  recipient_risk_score:   computed from train only
+  StandardScaler:         fitted on original train (pre-SMOTE)
+  SMOTE:                  applied to train only
+  Threshold tuning:       empirically via PR curve on val set
+                          optimal_threshold = argmax(F1)
+                          NOT manually set
+  Final evaluation:       test set only
+
+CLASSIFICATION REPORT:
+              precision    recall  f1-score   support
+
+  Legitimate     1.0000    1.0000    1.0000    394000
+       Fraud     1.0000    1.0000    1.0000      6000
+
+    accuracy                         1.0000    400000
+   macro avg     1.0000    1.0000    1.0000    400000
+weighted avg     1.0000    1.0000    1.0000    400000
+
+ROC AUC Score: 1.0000

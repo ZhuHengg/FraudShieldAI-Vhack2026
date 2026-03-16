@@ -108,6 +108,12 @@ class EnsembleModel:
         df_lgb[continuous_features] = self.lgb_scaler.transform(
             df_lgb[continuous_features]
         )
+        
+        # Column-alignment defensive step
+        for col in self.lgb_features:
+            if col not in df_lgb.columns:
+                df_lgb[col] = 0.0
+                
         return df_lgb[self.lgb_features].values
 
     def score_iso(self, X_iso: np.ndarray) -> np.ndarray:
