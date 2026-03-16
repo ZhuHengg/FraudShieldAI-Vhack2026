@@ -1,0 +1,4 @@
+risk_tier,transaction_count,fraud_count,fraud_rate
+Approve,394000,0,0.0
+Block,5999,5999,1.0
+Flag,1,1,1.0

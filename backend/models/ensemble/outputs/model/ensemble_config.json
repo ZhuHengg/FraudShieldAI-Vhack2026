@@ -1,0 +1,22 @@
+{
+  "weights": {
+    "lgb": 0.6,
+    "iso": 0.1,
+    "beh": 0.3
+  },
+  "thresholds": {
+    "optimal_threshold": 29.30598903393696,
+    "flag_threshold": 64.65299451696848
+  },
+  "validation_metrics": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 0.99999999995
+  },
+  "notes": {
+    "weights_source": "grid search on validation set",
+    "threshold_source": "PR curve argmax F1 on val set",
+    "scale": "0-100 for all model scores",
+    "hardcoded_values": "none \u2014 all empirically derived"
+  }
+}
