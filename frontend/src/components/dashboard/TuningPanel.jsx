@@ -1,9 +1,12 @@
 import React from 'react'
 import Panel from '../shared/Panel'
+import { Zap, RefreshCcw } from 'lucide-react'
 
-export default function TuningPanel({ params, updateParam }) {
+export default function TuningPanel({ 
+  params, updateParam, weights, thresholds, 
+  triggerAttackBurst, resetParams 
+}) {
   const SliderRow = ({ label, value, keyName, min, max, step }) => {
-    // calculate fill percentage for custom track styling
     const pct = ((value - min) / (max - min)) * 100
     
     return (
@@ -28,28 +31,71 @@ export default function TuningPanel({ params, updateParam }) {
     )
   }
 
-  // Zone Visualizer calcs
-  const lowerBound = Math.max(0, params.threshold - (params.bufferWidth / 2))
-  const upperBound = Math.min(1, params.threshold + (params.bufferWidth / 2))
-  
-  const greenPct = lowerBound * 100
-  const amberPct = (upperBound - lowerBound) * 100
-  const redPct = (1 - upperBound) * 100
+  // Use thresholds from backend, defaults to 0.35 and 0.60 (per requirement)
+  let approveThreshold = thresholds?.approve ?? 0.35
+  let blockThreshold   = thresholds?.block   ?? 0.60
+
+  // Normalize if backend returns 0-100 scale
+  if (approveThreshold > 1) approveThreshold /= 100
+  if (blockThreshold > 1)   blockThreshold   /= 100
+
+  const greenPct = approveThreshold * 100
+  const amberPct = (blockThreshold - approveThreshold) * 100
+  const redPct   = (1 - blockThreshold) * 100
+
+  // Model weights (from score_fusion.py)
+  const wLgb = weights?.lgb ?? 0.55
+  const wIso = weights?.iso ?? 0.25
+  const wBeh = weights?.beh ?? 0.20
 
   return (
     <Panel className="border border-border">
       <div className="flex justify-between items-center mb-6">
-        <h3 className="section-label">Parameter Tuning</h3>
+        <h3 className="section-label">Simulation Tuning</h3>
       </div>
 
       <div className="space-y-1 mb-8">
-        <SliderRow label="Fraud Threshold" value={params.threshold} keyName="threshold" min={0.10} max={0.90} step={0.01} />
-        <SliderRow label="XGBoost Weight" value={params.xgbWeight} keyName="xgbWeight" min={0.00} max={1.00} step={0.05} />
+        <SliderRow label="Simulation Speed" value={params.simulationSpeed} keyName="simulationSpeed" min={0.10} max={5.00} step={0.10} />
         <SliderRow label="SMOTE Aggressiveness" value={params.smoteLevel} keyName="smoteLevel" min={0.00} max={1.00} step={0.05} />
-        <SliderRow label="Flag Buffer Zone" value={params.bufferWidth} keyName="bufferWidth" min={0.02} max={0.30} step={0.02} />
       </div>
 
-      {/* Zone Visualiser */}
+      <div className="grid grid-cols-2 gap-3 mb-8">
+        <button
+          onClick={triggerAttackBurst}
+          className="flex items-center justify-center gap-2 py-2 px-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl font-mono text-[11px] font-bold uppercase tracking-wider transition-all active:scale-95"
+        >
+          <Zap size={14} className="fill-current" />
+          Attack Burst
+        </button>
+        <button
+          onClick={resetParams}
+          className="flex items-center justify-center gap-2 py-2 px-3 bg-white/5 hover:bg-white/10 text-text-muted border border-white/10 rounded-xl font-mono text-[11px] font-bold uppercase tracking-wider transition-all active:scale-95"
+        >
+          <RefreshCcw size={14} />
+          Reset Specs
+        </button>
+      </div>
+
+      {/* Model Weights (read-only display) */}
+      <div className="mb-6">
+        <h4 className="section-label mb-3">Ensemble Model Weights</h4>
+        <div className="space-y-2 font-mono text-[11px]">
+          <div className="flex justify-between items-center">
+            <span className="text-cyan-400">LightGBM</span>
+            <span className="text-text-secondary font-bold">{(wLgb * 100).toFixed(0)}%</span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-purple-400">Isolation Forest</span>
+            <span className="text-text-secondary font-bold">{(wIso * 100).toFixed(0)}%</span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-amber-400">Behavioral Rules</span>
+            <span className="text-text-secondary font-bold">{(wBeh * 100).toFixed(0)}%</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Decision Boundaries (fixed from real model) */}
       <div>
         <h4 className="section-label mb-2">Decision Boundaries</h4>
         <div className="flex h-3 rounded-full overflow-hidden w-full bg-bg-200 shadow-inner">
@@ -59,8 +105,9 @@ export default function TuningPanel({ params, updateParam }) {
         </div>
         <div className="flex justify-between mt-2 font-mono text-[10px] text-text-muted">
           <span>0.0</span>
-          <span>{lowerBound.toFixed(2)}</span>
-          <span>{upperBound.toFixed(2)}</span>
+          <span className="text-[#10b981]">APPROVE ≤ {approveThreshold.toFixed(2)}</span>
+          <span className="text-[#f59e0b]">FLAG</span>
+          <span className="text-[#ef4444]">BLOCK &gt; {blockThreshold.toFixed(2)}</span>
           <span>1.0</span>
         </div>
       </div>

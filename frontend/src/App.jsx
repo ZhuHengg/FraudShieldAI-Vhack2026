@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import Header from './components/layout/Header'
 import Sidebar from './components/layout/Sidebar'
 import Dashboard from './pages/Dashboard'
-import Search from './pages/Search'
+import TransactionInvestigation from './pages/TransactionInvestigation'
 import RiskRadar from './pages/RiskRadar'
 import LiveSimulator from './pages/LiveSimulator'
 import FraudAnalysis from './pages/FraudAnalysis'
@@ -20,7 +20,7 @@ function App() {
         <Header engine={engine} activeTab={activeTab} />
         <main className="flex-1 overflow-y-auto overflow-x-hidden p-6 relative">
           {activeTab === 'dashboard' && <Dashboard engine={engine} />}
-          {activeTab === 'search' && <Search engine={engine} />}
+          {activeTab === 'search' && <TransactionInvestigation engine={engine} />}
           {activeTab === 'radar' && <RiskRadar engine={engine} />}
           {activeTab === 'live' && <LiveSimulator engine={engine} />}
           {activeTab === 'analysis' && <FraudAnalysis engine={engine} />}

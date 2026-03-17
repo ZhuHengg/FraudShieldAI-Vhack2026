@@ -8,12 +8,12 @@ export default function Badge({ decision }) {
 
   return (
     <span className={clsx(
-      "px-2 py-[2px] rounded-pill font-mono text-[10px] whitespace-nowrap border font-bold uppercase tracking-wider",
+      "px-2 py-[2px] rounded-pill font-mono text-[9px] whitespace-nowrap border font-bold tracking-widest uppercase",
       {
-        'bg-[#dcfce7] text-[#15803d] border-[#86efac]': isApprove,
-        'bg-[#fef3c7] text-[#b45309] border-[#fcd34d]': isFlag,
-        'bg-[#fee2e2] text-[#b91c1c] border-[#fca5a5]': isBlock,
-        'bg-bg-200 text-text-secondary border-border-md': !isApprove && !isFlag && !isBlock
+        'bg-[rgba(0,255,136,0.1)] text-[#00ff88] border-[#00ff88]/30': isApprove,
+        'bg-[rgba(255,170,0,0.1)] text-[#ffaa00] border-[#ffaa00]/30': isFlag,
+        'bg-[rgba(255,68,68,0.1)] text-[#ff4444] border-[#ff4444]/30': isBlock,
+        'bg-bg-200 text-text-secondary border-border': !isApprove && !isFlag && !isBlock
       }
     )}>
       {decision}

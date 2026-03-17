@@ -5,10 +5,10 @@ import clsx from 'clsx'
 export default function Sidebar({ activeTab, setActiveTab }) {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'search', label: 'Search', icon: Search },
+    { id: 'search', label: 'Investigation', icon: Search },
     { id: 'radar', label: 'Risk Radar', icon: Activity },
     { id: 'live', label: 'Live Simulator', icon: Cpu },
-    { id: 'analysis', label: 'Fraud Analysis', icon: ShieldAlert },
+    { id: 'analysis', label: 'Model Insights', icon: ShieldAlert },
     { id: 'simulator', label: 'Fraud Simulator', icon: ShieldAlert },
   ]
 

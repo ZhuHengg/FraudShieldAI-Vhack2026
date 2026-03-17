@@ -4,10 +4,10 @@ import clsx from 'clsx'
 
 const PAGE_TITLES = {
   dashboard: 'Dashboard',
-  search: 'User Search',
+  search: 'TRANSACTION INVESTIGATION',
   radar: 'Risk Radar',
   live: 'Live Simulator',
-  analysis: 'Fraud Analysis',
+  analysis: 'Model Insights',
   simulator: 'Fraud Simulator',
 }
 

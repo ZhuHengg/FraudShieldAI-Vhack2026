@@ -49,6 +49,14 @@ export default function ConfusionMatrix({ matrix }) {
           <div className="font-mono font-bold text-text-primary text-[14px]">{formatScore(f1)}</div>
         </div>
       </div>
+
+      {/* Ground truth label */}
+      <div className="mt-4 pt-3 border-t border-border">
+        <p className="font-mono text-[10px] text-text-muted text-center leading-relaxed">
+          Ground truth: <span className="text-[#ef4444]">Attack Burst = FRAUD</span> · <span className="text-[#10b981]">Normal simulation = LEGIT</span>
+          <br />All transactions scored by real backend model
+        </p>
+      </div>
     </Panel>
   )
 }

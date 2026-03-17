@@ -67,9 +67,10 @@ export default function DrillDownPanel({ txn, onClose }) {
           {/* Model Contributions */}
           <div className="mb-6">
             <h3 className="section-label mb-3">Model Contributions</h3>
-            <BarPill label="XGBoost" pct={txn.xgbScore} colorStr="var(--cyan-500)" />
-            <BarPill label="LightGBM" pct={txn.lgbScore} colorStr="var(--teal-500)" />
-            <BarPill label="Ensemble" pct={txn.ensembleScore} colorStr="linear-gradient(135deg, #06b6d4, #14b8a6)" />
+            <BarPill label="LightGBM" pct={txn.lgbScore || 0} colorStr="var(--cyan-500)" />
+            <BarPill label="Iso Forest" pct={txn.isoScore || 0} colorStr="var(--purple-500)" />
+            <BarPill label="Behavioral" pct={txn.behScore || 0} colorStr="var(--amber-500)" />
+            <BarPill label="Ensemble" pct={txn.ensembleScore || 0} colorStr="linear-gradient(135deg, #06b6d4, #14b8a6)" />
           </div>
 
           {/* Metadata Grid */}

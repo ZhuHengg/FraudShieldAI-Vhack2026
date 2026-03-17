@@ -6,7 +6,8 @@ export const formatCurrency = (amount, currency = 'MYR') => {
   }).format(amount).replace(currency, currency + ' ')
 }
 
-export const formatTime = (date) => {
+export const formatTime = (dateInput) => {
+  const date = typeof dateInput === 'string' ? new Date(dateInput) : dateInput
   return new Intl.DateTimeFormat('en-MY', {
     hour: '2-digit',
     minute: '2-digit',
