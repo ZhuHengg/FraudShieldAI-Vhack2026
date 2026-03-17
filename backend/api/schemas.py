@@ -16,6 +16,30 @@ class TransactionRequest(BaseModel):
     receiver_balance_before: Optional[float] = None
     receiver_balance_after: Optional[float] = None
 
+    # Behavioral / session context
+    amount_vs_avg_ratio: Optional[float] = None
+    avg_transaction_amount_30d: Optional[float] = None
+    session_duration_seconds: Optional[float] = None
+    failed_login_attempts: Optional[int] = None
+    tx_count_24h: Optional[int] = None
+    transaction_hour: Optional[int] = None       # derive from timestamp if None
+    is_weekend: Optional[int] = None             # 0 or 1, derive from timestamp if None
+
+    # Account / recipient context
+    sender_account_fully_drained: Optional[int] = None   # 0 or 1
+    is_new_recipient: Optional[int] = None               # 0 or 1
+    established_user_new_recipient: Optional[int] = None # 0 or 1
+    account_age_days: Optional[float] = None
+    recipient_risk_profile_score: Optional[float] = None
+
+    # Device / IP context
+    is_new_device: Optional[int] = None     # 0 or 1
+    is_proxy_ip: Optional[int] = None       # 0 or 1
+    ip_risk_score: Optional[float] = None
+    country_mismatch: Optional[int] = None            # 0 or 1
+    country_mismatch_suspicious: Optional[int] = None # 0 or 1
+    transfer_type_encoded: Optional[int] = None       # 0 or 1
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -29,6 +53,24 @@ class TransactionRequest(BaseModel):
                 "sender_balance_after": 5000.00,
                 "receiver_balance_before": 2000.00,
                 "receiver_balance_after": 7000.00,
+                "amount_vs_avg_ratio": 1.5,
+                "avg_transaction_amount_30d": 3333.33,
+                "session_duration_seconds": 120.0,
+                "failed_login_attempts": 0,
+                "tx_count_24h": 2,
+                "transaction_hour": 16,
+                "is_weekend": 0,
+                "sender_account_fully_drained": 0,
+                "is_new_recipient": 1,
+                "established_user_new_recipient": 0,
+                "account_age_days": 180.5,
+                "recipient_risk_profile_score": 0.1,
+                "is_new_device": 0,
+                "is_proxy_ip": 0,
+                "ip_risk_score": 0.05,
+                "country_mismatch": 0,
+                "country_mismatch_suspicious": 0,
+                "transfer_type_encoded": 0
             }
         }
 
@@ -45,6 +87,18 @@ class DashboardStats(BaseModel):
     avg_latency_ms: float
     fraud_rate_estimate: float
 
+class TopFeature(BaseModel):
+    feature: str
+    contribution: float
+
+class EnsembleSHAPResponse(BaseModel):
+    transaction_id: str
+    base_value: float
+    iso_score: float
+    lgb_score: float
+    beh_score: float
+    top_features: list[TopFeature]
+
 class RiskResponse(BaseModel):
     """Response schema for fraud prediction."""
     transaction_id: str
@@ -52,6 +106,7 @@ class RiskResponse(BaseModel):
     risk_level: str = Field(..., description="LOW / MEDIUM / HIGH")
     supervised_score: float = Field(..., description="LightGBM fraud probability")
     unsupervised_score: float = Field(..., description="Isolation Forest anomaly score")
+    behavioral_score: float = Field(..., description="Rule-based behavioral score")
     
     # Behavioral features
     reasons: list[str] = Field(default_factory=list, description="Reasons for the risk score")

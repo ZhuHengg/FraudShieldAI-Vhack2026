@@ -43,7 +43,70 @@ class EnsembleEngine:
         self.approve_threshold = self.ensemble_config['thresholds']['optimal_threshold']
         self.flag_threshold = self.ensemble_config['thresholds']['flag_threshold']
 
+        # Initialize SHAP explainer for LightGBM
+        try:
+            import shap
+            self.explainer = shap.TreeExplainer(self.lgb_model)
+        except Exception as e:
+            logger.warning(f"SHAP explainer could not be initialized: {e}")
+            self.explainer = None
+
         logger.info("EnsembleEngine initialized successfully")
+
+    def preprocess(self, txn_dict: dict) -> pd.DataFrame:
+        """
+        Applies privacy masking, cleans data, and derives basic features.
+        Shared between predict() and explain_transaction().
+        """
+        # 1. Privacy Masking
+        safe_txn = self.privacy.prepare_for_inference(txn_dict)
+        df = pd.DataFrame([safe_txn])
+
+        # 2. Fill Missing Columns and Numeric Conversion
+        required_feature_cols = [
+            'amount_vs_avg_ratio', 'avg_transaction_amount_30d', 'session_duration_seconds',
+            'failed_login_attempts', 'tx_count_24h', 'sender_account_fully_drained',
+            'is_new_recipient', 'established_user_new_recipient', 'account_age_days',
+            'recipient_risk_profile_score', 'is_new_device', 'is_proxy_ip', 'ip_risk_score',
+            'country_mismatch', 'country_mismatch_suspicious', 'transfer_type_encoded'
+        ]
+        for col in required_feature_cols:
+            if col not in df.columns or df[col].isna().any():
+                df[col] = df[col].fillna(0.0) if col in df.columns else 0.0
+            
+            # Ensure numeric
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+
+        # 3. Derived Features
+        df['log_amount'] = np.log1p(df['amount'].astype(float))
+        
+        # Avoid boolean attribute errors by checking values directly (input is single row)
+        avg_amt = df['avg_transaction_amount_30d'].iloc[0]
+        if pd.notna(avg_amt) and avg_amt > 0:
+            df['log_avg_30d'] = np.log1p(float(avg_amt))
+        else:
+            df['log_avg_30d'] = df['log_amount']
+
+        if df['transfer_type_encoded'].iloc[0] == 0.0:
+            tx_type = str(df['transaction_type'].iloc[0]).upper()
+            df['transfer_type_encoded'] = 1 if tx_type == 'CASH_OUT' else 0
+
+        ts = pd.to_datetime(df['timestamp'], utc=True)
+        df['transaction_hour'] = ts.dt.hour.iloc[0]
+        
+        if 'is_weekend' not in df.columns or df['is_weekend'].iloc[0] == 0.0:
+            df['is_weekend'] = 1 if ts.dt.dayofweek.iloc[0] in [5, 6] else 0
+
+        if df['amount_vs_avg_ratio'].iloc[0] == 0.0:
+            if pd.notna(avg_amt) and avg_amt > 0:
+                df['amount_vs_avg_ratio'] = df['amount'].iloc[0] / (float(avg_amt) + 1e-9)
+            else:
+                df['amount_vs_avg_ratio'] = 1.0
+
+        if 'country_mismatch_suspicious' not in df.columns or df['country_mismatch_suspicious'].iloc[0] == 0.0:
+            df['country_mismatch_suspicious'] = df.get('country_mismatch', pd.Series([0])).iloc[0]
+
+        return df
 
     def get_iso_features(self, df: pd.DataFrame) -> np.ndarray:
         binary_features = [
@@ -65,9 +128,9 @@ class EnsembleEngine:
                 df_iso[col] = 0.0
                 
         df_iso[continuous_features] = self.iso_scaler.transform(df_iso[continuous_features])
-        return df_iso[all_iso_features].values
+        return df_iso[all_iso_features]
 
-    def get_lgb_features(self, df: pd.DataFrame) -> np.ndarray:
+    def get_lgb_features(self, df: pd.DataFrame) -> pd.DataFrame:
         continuous_features = [
             'log_amount', 'log_avg_30d', 'amount_vs_avg_ratio', 'transaction_hour',
             'session_duration_seconds', 'failed_login_attempts', 'ip_risk_score',
@@ -80,6 +143,9 @@ class EnsembleEngine:
             if col not in df_lgb.columns:
                 df_lgb[col] = 0.0
                 
+        # To silence sklearn feature name warnings, pass a DataFrame to the scaler
+        # The scaler might expect specific feature names, but we only have `continuous_features`.
+        # To be safe and just silence the estimator warning later, we transform and assign back.
         df_lgb[continuous_features] = self.lgb_scaler.transform(df_lgb[continuous_features])
         
         # Column-alignment defensive step
@@ -87,14 +153,15 @@ class EnsembleEngine:
             if col not in df_lgb.columns:
                 df_lgb[col] = 0.0
                 
-        return df_lgb[self.lgb_features].values
+        # Ensure all columns are numeric
+        return df_lgb[self.lgb_features].astype(float)
 
-    def score_iso(self, X_iso: np.ndarray) -> float:
+    def score_iso(self, X_iso: pd.DataFrame) -> float:
         raw_scores = -self.iso_model.decision_function(X_iso)
         risk_scores = self.iso_mms.transform(raw_scores.reshape(-1, 1)).flatten()
         return risk_scores[0]
 
-    def score_lgb(self, X_lgb: np.ndarray) -> float:
+    def score_lgb(self, X_lgb: pd.DataFrame) -> float:
         return self.lgb_model.predict_proba(X_lgb)[:, 1][0] * 100
 
     def score_beh(self, df: pd.DataFrame) -> tuple:
@@ -102,17 +169,9 @@ class EnsembleEngine:
         return float(beh_scores_raw[0] * 100), reasons[0].split(' | ')
 
     def predict(self, txn: TransactionRequest) -> RiskResponse:
-        # 1. Apply Privacy Masking
-        safe_txn_dict = self.privacy.prepare_for_inference(txn.model_dump())
-        
-        # 2. Convert to DataFrame
-        df = pd.DataFrame([safe_txn_dict])
-        
-        # Simple feature inference placeholders (For full inference, would run FeatureEngineer)
-        df['log_amount'] = np.log1p(df['amount'])
-        if 'transfer_type_encoded' not in df.columns:
-            df['transfer_type_encoded'] = (df['transaction_type'] == 'cash_out').astype(int)
-        
+        # 1. Apply Shared Preprocessing
+        df = self.preprocess(txn.model_dump())
+
         # 3. Model Scoring
         X_iso = self.get_iso_features(df)
         iso_score = self.score_iso(X_iso)
@@ -141,10 +200,11 @@ class EnsembleEngine:
         # 6. Return standard RiskResponse
         return RiskResponse(
             transaction_id=txn.transaction_id,
-            risk_score=round(float(final_score), 2),
+            risk_score=float(np.round(final_score, 2)),
             risk_level=decision,
-            supervised_score=round(float(lgb_score/100.0), 4),
-            unsupervised_score=round(float(iso_score/100.0), 4),
+            supervised_score=float(np.round(lgb_score / 100.0, 4)),
+            unsupervised_score=float(np.round(iso_score / 100.0, 4)),
+            behavioral_score=float(np.round(beh_score / 100.0, 4)),
             reasons=reasons,
             privacy=PrivacyInfo(pii_hashed=True, hash_algorithm="SHA-256", dp_applied=False)
         )

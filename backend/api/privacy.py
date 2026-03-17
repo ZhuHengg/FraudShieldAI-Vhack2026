@@ -1,6 +1,7 @@
 import hashlib
 import numpy as np
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -9,8 +10,8 @@ class PrivacyProtector:
     Handles data masking and differential privacy for the FraudShield API.
     Ensures compliance with PDPA/GDPR for ASEAN user base.
     """
-    def __init__(self, salt="vhack_2026_super_secret"):
-        self.salt = salt.encode()
+    def __init__(self, salt: str = None):
+        self.salt = (salt or os.environ.get("FRAUDSHIELD_SALT", "vhack_2026_super_secret")).encode()
         
     def hash_pii(self, value: str) -> str:
         """One-way cryptographic hash for PII like Sender/Recipient IDs"""
@@ -18,8 +19,8 @@ class PrivacyProtector:
         hasher = hashlib.sha256()
         hasher.update(value.encode())
         hasher.update(self.salt)
-        # Return truncated hash to save space but maintain anonymity
-        return hasher.hexdigest()[:16]
+        # Return full 64-char hex digest to preserve collision resistance
+        return hasher.hexdigest()
         
     def add_dp_noise(self, score: float, epsilon: float = 5.0, sensitivity: float = 1.0) -> float:
         """
