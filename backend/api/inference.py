@@ -22,6 +22,7 @@ class EnsembleEngine:
         """
         self.profiler = BehavioralProfiler()
         self.privacy = PrivacyProtector()
+        self.user_avg_cache = {}  # In-memory cache for exponential moving average
         
         # Load Isolation Forest artifacts
         self.iso_model  = joblib.load(os.path.join(iso_model_dir, 'isolation_forest_model.pkl'))
@@ -97,11 +98,36 @@ class EnsembleEngine:
         if 'is_weekend' not in df.columns or df['is_weekend'].iloc[0] == 0.0:
             df['is_weekend'] = 1 if ts.dt.dayofweek.iloc[0] in [5, 6] else 0
 
-        if df['amount_vs_avg_ratio'].iloc[0] == 0.0:
-            if pd.notna(avg_amt) and avg_amt > 0:
-                df['amount_vs_avg_ratio'] = df['amount'].iloc[0] / (float(avg_amt) + 1e-9)
-            else:
-                df['amount_vs_avg_ratio'] = 1.0
+        # Fix: Ensure realistic cold-start baselines and stateful tracking
+        TYPE_DEFAULTS = {
+            'TRANSFER':  300.0,
+            'CASH_OUT':  800.0,
+            'PAYMENT':   150.0,
+        }
+        tx_type = str(df['transaction_type'].iloc[0]).upper()
+        
+        # Get hashed sender ID (already masked by PrivacyProtector if applicable)
+        hashed_sender = df['sender_id'].iloc[0] if 'sender_id' in df.columns else "unknown_sender"
+        
+        # Determine baseline past average
+        if hashed_sender in self.user_avg_cache:
+            past_avg = self.user_avg_cache[hashed_sender]
+        elif pd.notna(avg_amt) and avg_amt > 1.0:
+            past_avg = float(avg_amt)
+        else:
+            past_avg = TYPE_DEFAULTS.get(tx_type, 300.0)
+            
+        raw_ratio = df['amount'].iloc[0] / max(past_avg, 1.0)
+        
+        # Fix: Cap the ratio at 15x to prevent model distortion from extreme scaling
+        df['amount_vs_avg_ratio'] = min(raw_ratio, 15.0)
+        
+        # Fix: Update log_avg_30d to match the true cached average
+        df['log_avg_30d'] = np.log1p(past_avg)
+        
+        # Fast convergence update
+        ALPHA = 0.3
+        self.user_avg_cache[hashed_sender] = ALPHA * df['amount'].iloc[0] + (1 - ALPHA) * past_avg
 
         if 'country_mismatch_suspicious' not in df.columns or df['country_mismatch_suspicious'].iloc[0] == 0.0:
             df['country_mismatch_suspicious'] = df.get('country_mismatch', pd.Series([0])).iloc[0]
@@ -127,7 +153,7 @@ class EnsembleEngine:
             if col not in df_iso.columns:
                 df_iso[col] = 0.0
                 
-        df_iso[continuous_features] = self.iso_scaler.transform(df_iso[continuous_features])
+        df_iso[continuous_features] = self.iso_scaler.transform(df_iso[continuous_features].values)
         return df_iso[all_iso_features]
 
     def get_lgb_features(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -143,10 +169,10 @@ class EnsembleEngine:
             if col not in df_lgb.columns:
                 df_lgb[col] = 0.0
                 
-        # To silence sklearn feature name warnings, pass a DataFrame to the scaler
+        # To silence sklearn feature name warnings, pass a numpy array to the scaler
         # The scaler might expect specific feature names, but we only have `continuous_features`.
         # To be safe and just silence the estimator warning later, we transform and assign back.
-        df_lgb[continuous_features] = self.lgb_scaler.transform(df_lgb[continuous_features])
+        df_lgb[continuous_features] = self.lgb_scaler.transform(df_lgb[continuous_features].values)
         
         # Column-alignment defensive step
         for col in self.lgb_features:
@@ -157,7 +183,7 @@ class EnsembleEngine:
         return df_lgb[self.lgb_features].astype(float)
 
     def score_iso(self, X_iso: pd.DataFrame) -> float:
-        raw_scores = -self.iso_model.decision_function(X_iso)
+        raw_scores = -self.iso_model.decision_function(X_iso.values)
         risk_scores = self.iso_mms.transform(raw_scores.reshape(-1, 1)).flatten()
         return risk_scores[0]
 
@@ -169,6 +195,8 @@ class EnsembleEngine:
         return float(beh_scores_raw[0] * 100), reasons[0].split(' | ')
 
     def predict(self, txn: TransactionRequest) -> RiskResponse:
+        from api.schemas import RuleBreakdown, FeatureSnapshot
+        
         # 1. Apply Shared Preprocessing
         df = self.preprocess(txn.model_dump())
 
@@ -196,8 +224,35 @@ class EnsembleEngine:
             decision = "MEDIUM"
         else:
             decision = "HIGH"
+
+        # 6. Extract per-rule scores for breakdown
+        drain_raw = self.profiler._score_drain_unknown(df).iloc[0]
+        dev_raw = self.profiler._score_high_deviation(df).iloc[0]
+        ctx_raw = self.profiler._score_risky_context(df).iloc[0]
+        vel_raw = self.profiler._score_rapid_session(df).iloc[0]
+        
+        rule_breakdown = RuleBreakdown(
+            drain_score=float(np.round(drain_raw * self.profiler.rules['drain_to_unknown'], 4)),
+            deviation_score=float(np.round(dev_raw * self.profiler.rules['high_amount_deviation'], 4)),
+            context_score=float(np.round(ctx_raw * self.profiler.rules['risky_context'], 4)),
+            velocity_score=float(np.round(vel_raw * self.profiler.rules['rapid_session'], 4)),
+        )
+
+        # 7. Extract key feature values for dashboard
+        feature_snapshot = FeatureSnapshot(
+            amount_vs_avg_ratio=float(df['amount_vs_avg_ratio'].iloc[0]),
+            ip_risk_score=float(df['ip_risk_score'].iloc[0]) if 'ip_risk_score' in df.columns else 0.0,
+            tx_count_24h=int(df['tx_count_24h'].iloc[0]) if 'tx_count_24h' in df.columns else 0,
+            session_duration_seconds=float(df['session_duration_seconds'].iloc[0]) if 'session_duration_seconds' in df.columns else 0.0,
+            is_new_device=int(df['is_new_device'].iloc[0]) if 'is_new_device' in df.columns else 0,
+            country_mismatch=int(df['country_mismatch'].iloc[0]) if 'country_mismatch' in df.columns else 0,
+            sender_fully_drained=int(df['sender_account_fully_drained'].iloc[0]) if 'sender_account_fully_drained' in df.columns else 0,
+            is_new_recipient=int(df['is_new_recipient'].iloc[0]) if 'is_new_recipient' in df.columns else 0,
+            account_age_days=float(df['account_age_days'].iloc[0]) if 'account_age_days' in df.columns else 0.0,
+            is_proxy_ip=int(df['is_proxy_ip'].iloc[0]) if 'is_proxy_ip' in df.columns else 0,
+        )
             
-        # 6. Return standard RiskResponse
+        # 8. Return enriched RiskResponse
         return RiskResponse(
             transaction_id=txn.transaction_id,
             risk_score=float(np.round(final_score, 2)),
@@ -206,5 +261,7 @@ class EnsembleEngine:
             unsupervised_score=float(np.round(iso_score / 100.0, 4)),
             behavioral_score=float(np.round(beh_score / 100.0, 4)),
             reasons=reasons,
-            privacy=PrivacyInfo(pii_hashed=True, hash_algorithm="SHA-256", dp_applied=False)
+            privacy=PrivacyInfo(pii_hashed=True, hash_algorithm="SHA-256", dp_applied=False),
+            rule_breakdown=rule_breakdown,
+            feature_snapshot=feature_snapshot,
         )

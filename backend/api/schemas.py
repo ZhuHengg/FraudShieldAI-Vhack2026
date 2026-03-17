@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 
 class TransactionRequest(BaseModel):
     """Schema for a transaction to be scored."""
@@ -99,6 +99,26 @@ class EnsembleSHAPResponse(BaseModel):
     beh_score: float
     top_features: list[TopFeature]
 
+class RuleBreakdown(BaseModel):
+    """Per-rule weighted scores from the BehavioralProfiler."""
+    drain_score: float = 0.0
+    deviation_score: float = 0.0
+    context_score: float = 0.0
+    velocity_score: float = 0.0
+
+class FeatureSnapshot(BaseModel):
+    """Key feature values used during inference — for frontend dashboards."""
+    amount_vs_avg_ratio: float = 1.0
+    ip_risk_score: float = 0.0
+    tx_count_24h: int = 0
+    session_duration_seconds: float = 0.0
+    is_new_device: int = 0
+    country_mismatch: int = 0
+    sender_fully_drained: int = 0
+    is_new_recipient: int = 0
+    account_age_days: float = 0.0
+    is_proxy_ip: int = 0
+
 class RiskResponse(BaseModel):
     """Response schema for fraud prediction."""
     transaction_id: str
@@ -111,6 +131,10 @@ class RiskResponse(BaseModel):
     # Behavioral features
     reasons: list[str] = Field(default_factory=list, description="Reasons for the risk score")
     privacy: PrivacyInfo = Field(..., description="Privacy masking information")
+    
+    # Extended fields for dashboard analytics
+    rule_breakdown: Optional[RuleBreakdown] = None
+    feature_snapshot: Optional[FeatureSnapshot] = None
 
     class Config:
         json_schema_extra = {
@@ -125,6 +149,21 @@ class RiskResponse(BaseModel):
                     "pii_hashed": True,
                     "hash_algorithm": "SHA-256",
                     "dp_applied": False
+                },
+                "rule_breakdown": {
+                    "drain_score": 0.35,
+                    "deviation_score": 0.0,
+                    "context_score": 0.15,
+                    "velocity_score": 0.0
+                },
+                "feature_snapshot": {
+                    "amount_vs_avg_ratio": 2.3,
+                    "ip_risk_score": 0.7,
+                    "tx_count_24h": 8,
+                    "session_duration_seconds": 45,
+                    "is_new_device": 1,
+                    "country_mismatch": 0,
+                    "sender_fully_drained": 0
                 }
             }
         }
