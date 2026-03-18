@@ -1,5 +1,5 @@
 import React from 'react'
-import { ShieldCheck, LayoutDashboard, Search, Activity, Cpu, ShieldAlert } from 'lucide-react'
+import { ShieldCheck, LayoutDashboard, Search, Activity, Cpu, ShieldAlert, Zap } from 'lucide-react'
 import clsx from 'clsx'
 
 export default function Sidebar({ activeTab, setActiveTab }) {
@@ -9,7 +9,7 @@ export default function Sidebar({ activeTab, setActiveTab }) {
     { id: 'radar', label: 'Risk Radar', icon: Activity },
     { id: 'live', label: 'Live Simulator', icon: Cpu },
     { id: 'analysis', label: 'Model Insights', icon: ShieldAlert },
-    { id: 'simulator', label: 'Fraud Simulator', icon: ShieldAlert },
+    { id: 'simulator', label: 'Model Tuning Lab', icon: Zap },
   ]
 
   return (

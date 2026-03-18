@@ -1,17 +1,15 @@
 import React from 'react'
 import Panel from '../shared/Panel'
 import { formatScore } from '../../utils/formatters'
+import clsx from 'clsx'
 
-export default function ConfusionMatrix({ matrix }) {
+export default function ConfusionMatrix({ matrix, className }) {
   const { tp, fp, fn, tn, precision, recall, f1 } = matrix
 
   return (
-    <Panel className="border border-border">
-      <div className="flex justify-between items-center mb-6">
-        <h3 className="section-label">Confusion Matrix</h3>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 mb-6 font-mono text-[13px] text-center font-bold">
+    <Panel className={clsx("border border-border flex-1 flex flex-col min-h-0", className)}>
+      <div className="flex-1 flex flex-col justify-center min-h-0">
+        <div className="grid grid-cols-2 gap-3 mb-6 font-mono text-[13px] text-center font-bold">
         {/* TP (Green) */}
         <div className="bg-[rgba(16,185,129,0.1)] text-[#10b981] p-4 rounded-xl flex flex-col justify-center border border-[rgba(16,185,129,0.3)] shadow-sm">
           <div className="text-[20px] mb-1">{tp}</div>
@@ -57,6 +55,7 @@ export default function ConfusionMatrix({ matrix }) {
           <br />All transactions scored by real backend model
         </p>
       </div>
-    </Panel>
+    </div>
+  </Panel>
   )
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { generateTransaction } from '../utils/fraudScoring'
 
 /**
@@ -9,6 +9,22 @@ import { generateTransaction } from '../utils/fraudScoring'
  * If the backend is offline, transactions are silently discarded.
  */
 
+// ── Global shared store — survives tab switches ──────────────────────────────
+if (!window.__fraudShieldStore) {
+  window.__fraudShieldStore = {
+    txnHistory: [],
+    activeWeights: { lgb: 0.55, iso: 0.25, beh: 0.20 },
+    activeThresholds: { approve: 35, flag: 60 },
+  }
+}
+
+function pushToGlobalStore(txn) {
+  const store = window.__fraudShieldStore
+  store.txnHistory.push(txn)
+  if (store.txnHistory.length > 500) store.txnHistory.shift()
+  window.dispatchEvent(new CustomEvent('fraudshield:newtxn', { detail: txn }))
+}
+
 export function useTransactionEngine() {
   const [params, setParams] = useState({
     simulationSpeed: 1,   // transactions per second
@@ -18,6 +34,7 @@ export function useTransactionEngine() {
   const [allTransactions, setAllTransactions] = useState([])
   const [isRunning, setIsRunning] = useState(true)
   const [attackQueue, setAttackQueue] = useState(0)
+  const [selectedTxn, setSelectedTxn] = useState(null)
 
   // ─── Fix 4: Engine health polling ──────────────────────────────────────────
   const [engineOnline, setEngineOnline] = useState(false)
@@ -87,10 +104,16 @@ export function useTransactionEngine() {
     const tick = async () => {
       const isAttackMode = attackQueue > 0
 
-      // Select template
+      // Select template naturally based on smoteLevel fraud rate, or override during an attack
       let template = 'normal'
       if (isAttackMode) {
         template = Math.random() > 0.4 ? 'attack' : 'suspicious'
+      } else {
+        // Natural mix based on slider
+        const rand = Math.random()
+        if (rand < params.smoteLevel) {
+          template = Math.random() > 0.6 ? 'attack' : 'suspicious'
+        }
       }
 
       const raw = generateTransaction(template, params.smoteLevel)
@@ -145,20 +168,73 @@ export function useTransactionEngine() {
 
         if (res.ok) {
           const scored = await res.json()
+          
+          // --- Model Tuning Lab Integration ---
+          // Use active tuning if applied, otherwise use config defaults
+          const tuning = window.__activeTuning || {
+            weights: { lgb: 0.55, iso: 0.25, beh: 0.20 },
+            thresholds: { approve: 35, flag: 60 }
+          };
+
+          const lgbScore = (scored.supervised_score || 0) * 100;
+          const isoScore = (scored.unsupervised_score || 0) * 100;
+          const behScore = (scored.behavioral_score || 0) * 100;
+
+          const tunedScore = Math.min(100, Math.max(0,
+            lgbScore * tuning.weights.lgb +
+            isoScore * tuning.weights.iso +
+            behScore * tuning.weights.beh
+          ));
+
+          const tunedDecision = 
+            tunedScore < tuning.thresholds.approve ? 'APPROVE' :
+            tunedScore < tuning.thresholds.flag    ? 'FLAG' : 'BLOCK';
+
           const processed = {
             ...raw,
-            ensembleScore: scored.risk_score / 100,
+            // Core scores for tuning lab
+            supervised_score: scored.supervised_score,
+            unsupervised_score: scored.unsupervised_score,
+            behavioral_score: scored.behavioral_score,
+            rule_breakdown: scored.rule_breakdown ?? null,
+            feature_snapshot: scored.feature_snapshot ?? null,
+            
+            // Re-scoring logic applied to live stream
+            ensembleScore: (tunedScore / 100),
+            riskScore: tunedScore,
+            decision: tunedDecision,
+            riskLevel: tunedDecision === 'BLOCK' ? 'HIGH' : tunedDecision === 'FLAG' ? 'MEDIUM' : 'LOW',
+            
+            // Ground truth for performance metrics
+            ground_truth: raw.isFraud ? 'FRAUD' : 'LEGIT',
+
+            // Legacy field support
             lgbScore: scored.supervised_score,
             isoScore: scored.unsupervised_score,
             behScore: scored.behavioral_score,
-            decision: scored.risk_level === 'LOW' ? 'APPROVE'
-              : scored.risk_level === 'MEDIUM' ? 'FLAG' : 'BLOCK',
-            riskLevel: scored.risk_level,
             reasons: scored.reasons,
             riskFactors: scored.reasons,
             scoredByBackend: true,
             latencyMs: Date.now() - startTick,
+
+            // Extended backend fields for dashboard analytics
+            rule_breakdown: scored.rule_breakdown ?? null,
+            feature_snapshot: scored.feature_snapshot ?? null,
+
+            // CamelCase aliases for RiskRadar.jsx data binding
+            // (these override the raw snake_case originals with backend-confirmed values)
+            isProxyIp: scored.feature_snapshot?.is_proxy_ip ?? raw.is_proxy_ip ?? 0,
+            countryMismatch: scored.feature_snapshot?.country_mismatch ?? raw.country_mismatch ?? 0,
+            isNewDevice: scored.feature_snapshot?.is_new_device ?? raw.is_new_device ?? 0,
+            ipRiskScore: scored.feature_snapshot?.ip_risk_score ?? raw.ip_risk_score ?? 0,
+            senderFullyDrained: scored.feature_snapshot?.sender_fully_drained ?? raw.sender_account_fully_drained ?? 0,
+            isNewRecipient: scored.feature_snapshot?.is_new_recipient ?? raw.is_new_recipient ?? 0,
+            amountVsAvgRatio: scored.feature_snapshot?.amount_vs_avg_ratio ?? raw.amount_vs_avg_ratio ?? 1,
+            txCount24h: scored.feature_snapshot?.tx_count_24h ?? raw.tx_count_24h ?? 0,
+            sessionDurationSeconds: scored.feature_snapshot?.session_duration_seconds ?? raw.session_duration_seconds ?? 0,
+            accountAgeDays: scored.feature_snapshot?.account_age_days ?? raw.account_age_days ?? 0,
           }
+          pushToGlobalStore(processed)
           setAllTransactions(prev => [processed, ...prev].slice(0, 500))
         } else if (res.status === 503) {
           const errorTx = {
@@ -171,7 +247,28 @@ export function useTransactionEngine() {
           setAllTransactions(prev => [errorTx, ...prev].slice(0, 500))
         }
       } catch (err) {
-        if (err.name !== 'AbortError') console.error('Prediction failed:', err)
+        if (err.name !== 'AbortError') {
+          console.error('Prediction failed:', err)
+          // Fallback: Simulate scores if backend is offline so Tuning Lab still works
+          const isFraud = raw.isFraud || false;
+          const mockS = isFraud ? (0.6 + Math.random() * 0.4) : (Math.random() * 0.4);
+          const mockU = isFraud ? (0.5 + Math.random() * 0.5) : (Math.random() * 0.3);
+          const mockB = isFraud ? (0.4 + Math.random() * 0.6) : (Math.random() * 0.2);
+
+          const errorTx = {
+            ...raw,
+            supervised_score: mockS,
+            unsupervised_score: mockU,
+            behavioral_score: mockB,
+            ground_truth: isFraud ? 'FRAUD' : 'LEGIT',
+            decision: 'BLOCK', // Keep original fallback decision
+            riskLevel: 'HIGH',
+            reasons: ['Engine Offline (Mocked Scores)'],
+            scoredByBackend: false,
+          }
+          pushToGlobalStore(errorTx)
+          setAllTransactions(prev => [errorTx, ...prev].slice(0, 500))
+        }
       }
     }
 
@@ -268,14 +365,15 @@ export function useTransactionEngine() {
       .filter(t => t.lgbScore != null && t.isoScore != null)
       .filter(t => Math.abs(t.lgbScore - t.isoScore) > 0.3)
       .map(t => ({
-        id: t.transaction_id || t.step,
+        id: t.transaction_id || t.id,
         amount: t.amount,
-        lgb: (t.lgbScore * 100).toFixed(1),
-        iso: (t.isoScore * 100).toFixed(1),
-        beh: (t.behScore * 100).toFixed(1),
-        final: (t.ensembleScore * 100).toFixed(1),
-        delta: Math.abs(t.lgbScore - t.isoScore).toFixed(2),
-        reason: t.reasons?.[0] || 'Unknown'
+        lgbScore: t.lgbScore,
+        isoScore: t.isoScore,
+        behScore: t.behScore,
+        ensembleScore: t.ensembleScore,
+        delta: Math.abs((t.lgbScore || 0) - (t.isoScore || 0)),
+        reason: t.reasons?.[0] || 'Unknown',
+        _raw: t
       }))
   }, [allTransactions])
 
@@ -285,19 +383,38 @@ export function useTransactionEngine() {
     return (modelDisagreements.length / scored.length) * 100
   }, [allTransactions, modelDisagreements])
 
-  const sparkline = useMemo(() => {
-    const now = Date.now()
-    const buckets = Array.from({ length: 12 }, () => ({ count: 0, fraud: 0 }))
-    allTransactions.forEach(t => {
-      const ageSecs = (now - new Date(t.timestamp)) / 1000
-      if (ageSecs <= 60) {
-        const idx = Math.min(11, Math.floor(ageSecs / 5))
-        buckets[11 - idx].count++
-        if (t.decision !== 'APPROVE') buckets[11 - idx].fraud++
-      }
-    })
-    return buckets.map((b, i) => ({ t: i * 5, rate: b.count ? b.fraud / b.count : 0 }))
-  }, [allTransactions])
+  // ─── Fix: Decoupled Rolling Sparkline Chart (60 seconds) ────────────────
+  const [sparkline, setSparkline] = useState(Array.from({ length: 60 }, (_, i) => ({ time: i, rate: 0 })))
+  
+  // Keep an up-to-date ref for the interval to read from without re-triggering
+  const txRef = useRef(allTransactions)
+  useEffect(() => { txRef.current = allTransactions }, [allTransactions])
+
+  useEffect(() => {
+    if (!isRunning) return
+    
+    const intervalId = setInterval(() => {
+      const now = Date.now()
+      // Find transactions occurring strictly in the last 1 second
+      const recentTxns = txRef.current.filter(t => {
+          const tTime = new Date(t.timestamp).getTime()
+          return (now - tTime) <= 1000 && (now - tTime) >= 0
+      })
+      
+      // Calculate instantaneous fraud rate for this 1-second interval
+      const newRate = recentTxns.length > 0 
+        ? recentTxns.filter(t => t.decision !== 'APPROVE').length / recentTxns.length 
+        : 0
+        
+      setSparkline(prev => {
+        const next = [...prev, { time: now, rate: newRate }]
+        if (next.length > 60) next.shift()
+        return next
+      })
+    }, 1000)
+    
+    return () => clearInterval(intervalId)
+  }, [isRunning])
 
   const histogram = useMemo(() => {
     const bins = Array.from({ length: 10 }, (_, i) => ({
@@ -317,6 +434,7 @@ export function useTransactionEngine() {
     isRunning,
     matrix, trends, sparkline, histogram,
     total, blocked, flagged, approved, avgLatency,
+    selectedTxn, setSelectedTxn,
     setIsRunning, updateParam, resetParams, triggerAttackBurst, clearData,
     // Backend state
     engineOnline,

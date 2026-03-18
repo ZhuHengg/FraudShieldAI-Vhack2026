@@ -142,10 +142,22 @@ export default function RiskRadar({ engine }) {
     transactions.forEach(t => {
       counts[t.deviceType] = (counts[t.deviceType] || 0) + 1
     })
-    const colors = ['#00d4ff', '#a855f7', '#10b981', '#f59e0b', '#ef4444']
-    return Object.entries(counts).map(([name, value], i) => ({
-      name, value, color: colors[i % colors.length],
-    }))
+
+    const DEVICE_COLORS = {
+      'Mobile': '#00d4ff',     // Cyan
+      'Desktop': '#10b981',    // Emerald
+      'API-Direct': '#a855f7', // Purple
+      'Tablet': '#f59e0b',     // Amber
+      'Unknown': '#ef4444'     // Red fallbacks
+    }
+
+    return Object.entries(counts)
+      .map(([name, value]) => ({
+        name, 
+        value, 
+        color: DEVICE_COLORS[name] || DEVICE_COLORS['Unknown']
+      }))
+      .sort((a, b) => b.value - a.value)
   }, [transactions])
   
   /* ── Sector distribution (Domestic vs Foreign) ─────── */
@@ -182,10 +194,10 @@ export default function RiskRadar({ engine }) {
     ]
   }, [transactions])
 
-  /* ── Risk scatter data (amountVsAvgRatio vs risk score) ─────── */
+  /* ── Risk scatter data (amount_vs_avg_ratio vs risk score) ─────── */
   const scatterData = useMemo(() =>
     transactions.slice(0, 100).map(t => ({
-      ratio: parseFloat((t.amountVsAvgRatio || 1).toFixed(2)),
+      ratio: parseFloat((t.amount_vs_avg_ratio || 1).toFixed(2)),
       riskScore: t.ensembleScore * 100,
       status: t.decision,
       amount: t.amount, // kept for tooltip only

@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
-  BarChart, Bar, Cell
+  BarChart, Bar, Cell, ReferenceLine
 } from 'recharts'
 import clsx from 'clsx'
 import { formatCurrency, formatTime } from '../utils/formatters'
@@ -116,12 +116,14 @@ export default function LiveSimulator({ engine }) {
                   />
                   <XAxis dataKey="time" hide />
                   <YAxis
-                    domain={[0, 'auto']}
+                    domain={[0, 1]}
                     tick={{ fontSize: 9, fill: '#cbd5e1' }}
                     axisLine={false} tickLine={false} width={40}
                     tickFormatter={v => `${(v * 100).toFixed(0)}%`}
                   />
-                  <Area type="monotone" dataKey="rate" stroke="#f87171" strokeWidth={1.5} fill="url(#fraudGrad)" dot={false} isAnimationActive={false} />
+                  {/* Ghost baseline so the chart doesn't look dead */}
+                  <ReferenceLine y={0} stroke="rgba(255,255,255,0.15)" strokeDasharray="4 4" />
+                  <Area type="monotone" dataKey="rate" stroke="#f87171" strokeWidth={1.5} fill="url(#colorFraud)" dot={false} isAnimationActive={false} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -147,9 +149,10 @@ export default function LiveSimulator({ engine }) {
                 <span className="font-mono text-[8px] text-muted-foreground tracking-widest uppercase w-20 shrink-0 text-right">AMOUNT</span>
                 <span className="font-mono text-[8px] text-muted-foreground tracking-widest uppercase w-28 shrink-0 pl-3">MERCHANT</span>
                 <span className="font-mono text-[8px] text-muted-foreground tracking-widest uppercase w-10 shrink-0">CTY</span>
-                <div className="flex-1 flex justify-end gap-3">
+                <div className="flex-1 flex justify-end gap-3 pr-2">
                   <span className="font-mono text-[8px] text-muted-foreground tracking-widest uppercase w-14 text-right">RISK</span>
                   <span className="font-mono text-[8px] text-muted-foreground tracking-widest uppercase w-14 text-right">STATUS</span>
+                  <span className="w-14 shrink-0"></span>{/* Space for Inspect btn */}
                 </div>
               </div>
 
@@ -181,6 +184,16 @@ export default function LiveSimulator({ engine }) {
                           </div>
                           <span className={clsx("w-8 text-right", t.decision === 'BLOCK' ? 'text-[#f87171]' : t.decision === 'FLAG' ? 'text-[#fbbf24]' : 'text-[#34d399]')}>{(t.ensembleScore * 100).toFixed(0)}%</span>
                           <span className={clsx("w-14 text-right", t.decision === 'APPROVE' ? 'text-[#34d399]' : getStatusColor(t.decision))}>{t.decision}</span>
+                          <button 
+                            className="ml-2 px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-[9px] font-mono text-text-muted transition-colors border border-white/10 shrink-0"
+                            onClick={(e) => {
+                              // Stop propagation so we don't double fire if the row is also clickable
+                              e.stopPropagation();
+                              engine.setSelectedTxn(t);
+                            }}
+                          >
+                            INSPECT
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -191,10 +204,8 @@ export default function LiveSimulator({ engine }) {
           </div>
         </div>
 
-        {/* RIGHT: Transaction Detail Inspector */}
-        <div className="w-[400px] shrink-0 basis-[400px]">
-          <TransactionInspector selectedTxn={engine.selectedTxn} engine={engine} />
-        </div>
+        {/* RIGHT: Transaction Detail Inspector (handles its own width + animation) */}
+        <TransactionInspector selectedTxn={engine.selectedTxn} engine={engine} />
       </div>
     </div>
   )

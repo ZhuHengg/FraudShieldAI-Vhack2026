@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import {
   Search as SearchIcon, AlertTriangle, ShieldAlert, Check, X,
-  Lock, Loader2, Info, ChevronDown, ChevronUp, FileText
+  Lock, Loader2, Info, ChevronDown, ChevronUp, FileText,
+  ArrowRight, Fingerprint, Globe, Zap
 } from 'lucide-react'
 import clsx from 'clsx'
 import { formatCurrency } from '../utils/formatters'
@@ -11,7 +12,17 @@ import {
 
 const API_BASE = 'http://localhost:8000'
 
-// ─── Utility ──────────────────────────────────────────────────────────────────
+// ─── Status Dot Component ─────────────────────────────
+const StatusDot = ({ status }) => {
+  const colors = {
+    danger:  'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]',
+    warning: 'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.6)]',
+    safe:    'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]',
+  }
+  return <div className={clsx('w-2 h-2 rounded-full shrink-0', colors[status] || colors.safe)} />
+}
+
+// ─── Utility ──────────────────────────────────────────
 const card = 'bg-bg-100 border border-border rounded-2xl p-4 relative overflow-hidden'
 const sectionTitle = 'text-[10px] uppercase tracking-[0.15em] text-text-muted mb-3 font-bold'
 
@@ -315,18 +326,78 @@ export default function TransactionInvestigation({ engine }) {
     : riskResult?.decision === 'APPROVE' ? 'LOW'
     : selected?.risk_level || (selected?.decision === 'BLOCK' ? 'HIGH' : selected?.decision === 'FLAG' ? 'MEDIUM' : 'LOW')
 
-  const lgbScore  = riskResult ? riskResult.layer_scores.lightgbm     : selected?.lgbScore  || 0
-  const isoScore  = riskResult ? riskResult.layer_scores.isolation_forest : selected?.xgbScore || 0
-  const behScore  = riskResult ? riskResult.layer_scores.behavioral    : 0
-  const reasons   = riskResult?.reasons?.length ? riskResult.reasons : (selected?.riskFactors || [])
-  const privacy   = riskResult?.privacy
-
   // ── Decision for admin panel (use override if any, else backend, else mock) ──
   const adminDecision = selected
     ? (decisions[selected.id]?.decision || riskResult?.decision || selected.decision)
-    : null
+    : 'APPROVE'
   const isResolved = selected ? !!decisions[selected.id] : false
   const isFlag     = adminDecision === 'FLAG' && !isResolved
+
+  const lgbScore  = riskResult ? riskResult.supervised_score     : selected?.lgbScore  || 0
+  const isoScore  = riskResult ? riskResult.unsupervised_score   : selected?.xgbScore || 0
+  const behScore  = riskResult ? riskResult.behavioral_score     : 0
+  const reasons   = riskResult?.reasons?.length ? riskResult.reasons : (selected?.riskFactors || [])
+  const privacy   = riskResult?.privacy
+
+  // --- Feature Snapshot & Detailed Metrics ---
+  const fs = riskResult?.feature_snapshot || {}
+  const amtRatio = fs.amount_vs_avg_ratio ?? selected?.amountVsAvgRatio ?? selected?.amount_vs_avg_ratio ?? 1
+  const ipRisk = fs.ip_risk_score ?? selected?.ipRiskScore ?? selected?.ip_risk_score ?? 0
+  const txCount = fs.tx_count_24h ?? selected?.txCount24h ?? selected?.tx_count_24h ?? 0
+  const sessionDur = fs.session_duration_seconds ?? selected?.sessionDurationSeconds ?? selected?.session_duration_seconds ?? 0
+  const isNewDev = fs.is_new_device ?? selected?.isNewDevice ?? selected?.is_new_device ?? 0
+  const countryMM = fs.country_mismatch ?? selected?.countryMismatch ?? selected?.country_mismatch ?? 0
+  const senderDrained = fs.sender_fully_drained ?? selected?.senderFullyDrained ?? selected?.sender_account_fully_drained ?? 0
+  const isNewRecip = fs.is_new_recipient ?? selected?.isNewRecipient ?? selected?.is_new_recipient ?? 0
+  const accountAge = fs.account_age_days ?? selected?.accountAgeDays ?? selected?.account_age_days ?? 0
+  const failedLogins = selected?.failed_login_attempts ?? 0
+
+  // Balances
+  const balBefore = selected?.sender_balance_before ?? 10000.00
+  const balAfter = selected?.sender_balance_after ?? (balBefore - (selected?.amount || 0))
+  const balChangePct = balBefore > 0 ? ((balAfter - balBefore) / balBefore * 100) : 0
+
+  const isFraud = selected?.isFraud ?? false
+  const groundTruth = isFraud ? "FRAUD" : "LEGIT"
+  const modelPredictedFraud = adminDecision !== 'APPROVE'
+
+  let verdict, verdictColor, verdictIcon
+  if (modelPredictedFraud && isFraud) { verdict = "TRUE POSITIVE"; verdictColor = "#10b981"; verdictIcon = "✅" }
+  else if (!modelPredictedFraud && !isFraud) { verdict = "TRUE NEGATIVE"; verdictColor = "#10b981"; verdictIcon = "✅" }
+  else if (modelPredictedFraud && !isFraud) { verdict = "FALSE POSITIVE"; verdictColor = "#f59e0b"; verdictIcon = "⚠" }
+  else { verdict = "FALSE NEGATIVE"; verdictColor = "#ef4444"; verdictIcon = "✗" }
+
+  const channelMap = {
+    'cash_out': 'ATM / Withdrawal', 'CASH_OUT': 'ATM / Withdrawal',
+    'transfer': 'P2P Transfer',      'TRANSFER': 'P2P Transfer',
+    'payment': 'Merchant Payment',   'PAYMENT': 'Merchant Payment',
+  }
+  const txType = selected?.transfer_type || selected?.transaction_type || 'TRANSFER'
+  const channel = channelMap[txType] || 'P2P Transfer'
+
+  const gtBullets = []
+  if (amtRatio > 5) gtBullets.push(`Amount ${amtRatio.toFixed(1)}× user's historical average`)
+  else if (amtRatio > 1.5) gtBullets.push(`Amount ${amtRatio.toFixed(1)}× above average baseline`)
+  if (senderDrained) gtBullets.push("Sender account completely emptied")
+  if (countryMM) gtBullets.push("Transaction from foreign IP/location")
+  if (isNewDev) gtBullets.push("Unrecognised device used")
+  if (sessionDur > 0 && sessionDur < 60) gtBullets.push(`Transaction completed in ${Math.round(sessionDur)} seconds`)
+  if (ipRisk > 0.7) gtBullets.push(`High-risk IP address (score: ${ipRisk.toFixed(2)})`)
+  if (txCount > 5) gtBullets.push(`${txCount} transactions in 24h (velocity anomaly)`)
+  if (gtBullets.length === 0) gtBullets.push("No anomalous feature thresholds breached")
+
+  const featureRows = [
+    { param: 'amount_vs_avg_ratio',   value: `${amtRatio.toFixed(2)}×`, threshold: '> 1.5×', status: amtRatio > 5 ? 'danger' : amtRatio > 1.5 ? 'warning' : 'safe' },
+    { param: 'sender_account_drained', value: senderDrained ? 'YES' : 'NO', threshold: '—', status: senderDrained ? 'danger' : 'safe' },
+    { param: 'ip_risk_score',         value: ipRisk.toFixed(3), threshold: '> 0.5', status: ipRisk > 0.7 ? 'danger' : ipRisk > 0.5 ? 'warning' : 'safe' },
+    { param: 'country_mismatch',      value: countryMM ? 'YES (foreign)' : 'NO (domestic)', threshold: '—', status: countryMM ? 'danger' : 'safe' },
+    { param: 'is_new_device',         value: isNewDev ? 'YES' : 'NO', threshold: '—', status: isNewDev ? 'warning' : 'safe' },
+    { param: 'tx_count_24h',          value: txCount.toString(), threshold: '> 5', status: txCount > 5 ? 'danger' : 'safe' },
+    { param: 'session_duration_secs', value: `${Math.round(sessionDur)}s`, threshold: '< 60s', status: sessionDur < 60 ? 'danger' : 'safe' },
+  ]
+  const rulesFireCount = featureRows.filter(r => r.status !== 'safe').length
+  const behContribution = behScore > 0.5 ? 'HIGH' : behScore > 0.2 ? 'MEDIUM' : 'LOW'
+
 
   return (
     <div className="flex gap-4 h-[calc(100vh-112px)] max-w-[1500px] mx-auto relative font-mono bg-[#06090e]">
@@ -451,85 +522,141 @@ export default function TransactionInvestigation({ engine }) {
         ) : (
           <div className="space-y-3 pb-6">
 
-            {/* ── Card 1: Transaction Header ── */}
+            {/* ═══ SECTION 1: TRANSACTION PROFILE ═══ */}
             <div className={card}>
-              <div className={sectionTitle}>Transaction</div>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-3 mb-1">
-                    <span className="text-[16px] font-bold text-zinc-100">{selected.id}</span>
-                    <div className="text-[10px] border border-[#1e3a2a] text-emerald-700/80 px-2 py-0.5 rounded uppercase tracking-widest">Transfer</div>
-                  </div>
-                  <div className="text-[28px] font-bold text-white mb-2">{formatCurrency(selected.amount)}</div>
-                  <div className="flex items-center gap-3 text-[12px]">
-                    <span className="text-cyan-400 font-bold">{selected.userId}</span>
-                    <span className="text-zinc-700">──────────→</span>
-                    <span className="text-cyan-400 font-bold">{selected.receiverId || 'USR-UNKNOWN'}</span>
-                  </div>
+              <div className={sectionTitle}>Transaction Profile</div>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="flex items-center gap-1.5 px-2 py-0.5 bg-[#10b981]/10 border border-[#10b981]/20 rounded text-[#10b981] font-mono text-[9px] font-bold tracking-widest">
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse" />
+                  LIVE
                 </div>
-                <div className="text-right text-[11px] text-zinc-500 shrink-0">
-                  <div>{new Date(selected.timestamp).toISOString().split('T')[0]}</div>
-                  <div>{new Date(selected.timestamp).toTimeString().split(' ')[0]}</div>
-                </div>
+                <span className="font-mono text-[11px] text-text-primary font-bold">
+                  {(selected.transaction_id || selected.id || 'UNKNOWN').toUpperCase()}
+                </span>
               </div>
-              {selected.amount && (
-                <div className="mt-3 text-[11px] text-zinc-600 pt-3 border-t border-[#1a2a3a]">
-                  Sender balance: RM 10,000.00 → RM {Math.max(0, 10000 - selected.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  <span className="text-red-400 ml-2 font-bold">(-{((selected.amount / 10000) * 100).toFixed(1)}%)</span>
-                </div>
-              )}
-            </div>
 
-            {/* ── Card 2: Risk Summary ── */}
-            <div className={card}>
-              <div className={sectionTitle}>Risk Summary</div>
-              {scoring ? (
-                <div className="space-y-3">
-                  <Skeleton className="h-8 w-[280px]" />
-                  <Skeleton className="h-4 w-[200px]" />
-                  <Skeleton className="h-4 w-[320px]" />
+              {/* Type badge + Channel + Timestamp */}
+              <div className="flex items-center gap-2 mb-1">
+                <span className="font-mono text-[9px] font-bold tracking-widest px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 uppercase">
+                  {txType}
+                </span>
+                <span className="font-mono text-[10px] text-text-muted">{channel}</span>
+              </div>
+              <div className="font-mono text-[10px] text-text-muted/60 tracking-widest mb-4">
+                {new Date(selected.timestamp).toISOString().split('T')[0]} · {new Date(selected.timestamp).toTimeString().split(' ')[0]}
+              </div>
+
+              {/* Amount */}
+              <div className="bg-bg-200/50 p-4 rounded-xl border border-border/50 mb-4">
+                <div className="font-mono text-[32px] font-bold text-text-primary leading-none tracking-tight mb-4">
+                  {formatCurrency(selected.amount)}
                 </div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-3 gap-4 mb-3">
-                    <div>
-                      <div className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1">Score</div>
-                      <div className="text-[26px] font-bold" style={{ color: riskColor(riskLevel) }}>
-                        {riskScore} <span className="text-[14px] text-zinc-500">/ 100</span>
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1">Decision</div>
-                      <div className="text-[14px] font-bold px-3 py-1 rounded-lg inline-block mt-1"
-                        style={{ color: decisionColor(adminDecision), backgroundColor: `${decisionColor(adminDecision)}18` }}>
-                        [{adminDecision}]
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1">Latency</div>
-                      <div className="text-[18px] font-bold text-zinc-300">{selected.latencyMs || '—'}ms</div>
-                    </div>
-                  </div>
-                  <div className="text-[11px] text-zinc-500 flex gap-4 mb-2">
-                    <span className="text-cyan-400">LGB: {lgbScore.toFixed(2)}</span>
-                    <span className="text-zinc-600">·</span>
-                    <span className="text-purple-400">ISO: {isoScore.toFixed(2)}</span>
-                    <span className="text-zinc-600">·</span>
-                    <span className="text-amber-400">BEH: {behScore.toFixed(2)}</span>
-                  </div>
-                  <div className="text-[10px] text-zinc-600">
-                    <span className="text-cyan-400">({Math.round(lgbScore*100)}×0.55)</span>
-                    {' + '}
-                    <span className="text-purple-400">({Math.round(isoScore*100)}×0.25)</span>
-                    {' + '}
-                    <span className="text-amber-400">({Math.round(behScore*100)}×0.20)</span>
-                    {' = '}
-                    <span style={{ color: riskColor(riskLevel) }} className="font-bold">
-                      {(lgbScore*0.55*100 + isoScore*0.25*100 + behScore*0.20*100).toFixed(2)} → {adminDecision}
+
+                {/* SENDER Block */}
+                <div className="mb-3 p-3 rounded-lg bg-bg-300/30 border border-border/30">
+                  <div className="font-mono text-[9px] text-text-muted/60 uppercase tracking-widest mb-1">SENDER</div>
+                  <div className="font-mono text-[12px] text-cyan-400 font-bold mb-1">{selected.userId}</div>
+                  <div className="flex items-center gap-2 font-mono text-[11px] text-text-muted">
+                    <span>RM {balBefore.toFixed(2)}</span>
+                    <ArrowRight size={10} className="text-text-muted/40" />
+                    <span>RM {balAfter.toFixed(2)}</span>
+                    <span className={clsx("font-bold", balChangePct < -90 ? "text-red-400" : balChangePct < 0 ? "text-amber-400" : "text-emerald-400")}>
+                      ({balChangePct.toFixed(1)}%)
                     </span>
                   </div>
-                </>
-              )}
+                  {(balAfter <= 0 || senderDrained) && (
+                    <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/15 border border-red-500/30 text-red-400 font-mono text-[9px] font-bold tracking-widest">
+                      ⚠ ACCOUNT FULLY DRAINED
+                    </div>
+                  )}
+                  {balChangePct < -90 && balAfter > 0 && (
+                    <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/10 border border-red-500/20 text-red-400 font-mono text-[9px] font-bold tracking-widest">
+                      ⚠ BALANCE CHANGE &gt; 90%
+                    </div>
+                  )}
+                </div>
+
+                {/* RECIPIENT Block */}
+                <div className="p-3 rounded-lg bg-bg-300/30 border border-border/30">
+                  <div className="font-mono text-[9px] text-text-muted/60 uppercase tracking-widest mb-1">RECIPIENT</div>
+                  <div className="font-mono text-[12px] text-cyan-400 font-bold mb-1">{selected.receiverId || 'USR-UNKNOWN'}</div>
+                  {isNewRecip ? (
+                    <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-400 font-mono text-[9px] font-bold tracking-widest">
+                      ⚠ FIRST-TIME RECIPIENT
+                    </div>
+                  ) : (
+                    <div className="font-mono text-[10px] text-text-muted/50">Known recipient</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* ── Card 2: Risk Summary (Gauge & Ensemble) ── */}
+            <div className={card}>
+                <div className={sectionTitle}>Score & Ensemble Breakdown</div>
+                {scoring ? (
+                   <div className="space-y-3">
+                     <Skeleton className="h-8 w-[280px]" />
+                     <Skeleton className="h-20 w-full" />
+                   </div>
+                ) : (
+                  <>
+                    <div className="flex flex-col items-center mb-6">
+                        <ScoreRangeSVG score={riskScore} />
+                    </div>
+
+                    <div className="flex flex-col gap-3 mb-6">
+                        {[
+                          { label: 'LIGHTGBM', pct: '55%', val: lgbScore, color: '#4FC3F7' },
+                          { label: 'ISOFOREST', pct: '25%', val: isoScore, color: '#ce93d8' },
+                          { label: 'BEHAVIORAL', pct: '20%', val: behScore, color: '#ffb74d' }
+                        ].map((bar, idx) => (
+                          <div key={idx} className="flex items-center gap-3">
+                            <div className="flex flex-col w-[110px] shrink-0">
+                              <span className="font-mono text-[10px] tracking-widest text-text-secondary">{bar.label}</span>
+                            </div>
+                            <div className="flex-1 h-[6px] bg-white/5 rounded-full relative overflow-hidden">
+                              <div className="h-full rounded-full transition-all duration-700 ease-out" style={{ backgroundColor: bar.color, width: `${bar.val * 100}%` }} />
+                            </div>
+                            <div className="w-[30px] text-right font-mono text-[11px] font-bold" style={{ color: bar.color }}>{(bar.val * 100).toFixed(0)}</div>
+                          </div>
+                        ))}
+                    </div>
+
+                    <div className="bg-[#050505] border border-white/10 rounded-lg p-3 relative overflow-hidden">
+                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-[#4FC3F7] via-[#ce93d8] to-[#ffb74d] opacity-50" />
+                        <div className="font-mono text-[11px] leading-[1.6] pl-2 whitespace-pre-wrap break-all">
+                          (<span className="text-[#4FC3F7]">{(lgbScore * 100).toFixed(1)}</span>×0.55) +{' '}
+                          (<span className="text-[#ce93d8]">{(isoScore * 100).toFixed(1)}</span>×0.25) +<br />
+                          (<span className="text-[#ffb74d]">{(behScore * 100).toFixed(1)}</span>×0.20) = <span className="text-white font-bold">{riskScore.toFixed(1)}</span> → <span className="font-bold" style={{ color: riskColor(riskLevel) }}>{adminDecision}</span>
+                        </div>
+                    </div>
+                  </>
+                )}
+            </div>
+
+            {/* ═══ SECTION 2: FEATURE PARAMETERS TABLE ═══ */}
+            <div className={card}>
+              <div className={sectionTitle}>Feature Parameters</div>
+              <div className="rounded-xl border border-border/30 overflow-hidden">
+                <div className="grid grid-cols-[1fr_80px_60px_36px] gap-1 px-3 py-2 bg-bg-300/30 font-mono text-[8px] text-text-muted/60 uppercase tracking-widest">
+                  <span>Parameter</span>
+                  <span>Value</span>
+                  <span>Threshold</span>
+                  <span className="text-center">Status</span>
+                </div>
+                {featureRows.map((row, i) => (
+                  <div key={row.param} className={clsx("grid grid-cols-[1fr_80px_60px_36px] gap-1 px-3 py-1.5 font-mono text-[10px] border-t border-border/10 transition-colors hover:bg-red-500/[0.03]", i % 2 === 1 && 'bg-bg-200/20')}>
+                    <span className="text-text-muted truncate">{row.param}</span>
+                    <span className={clsx("font-bold", row.status === 'danger' ? 'text-red-400' : row.status === 'warning' ? 'text-amber-400' : 'text-text-secondary')}>{row.value}</span>
+                    <span className="text-text-muted/50">{row.threshold}</span>
+                    <div className="flex justify-center items-center"><StatusDot status={row.status} /></div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2 font-mono text-[10px] text-text-muted/50 text-right">
+                {rulesFireCount} rules fired · Behavioral: <span className={clsx("font-bold", behContribution === 'HIGH' ? 'text-red-400' : behContribution === 'MEDIUM' ? 'text-amber-400' : 'text-emerald-400')}>{behContribution}</span>
+              </div>
             </div>
 
             {/* ── Card 3: Triggered Rules ── */}
@@ -547,13 +674,8 @@ export default function TransactionInvestigation({ engine }) {
                       return (
                         <div key={i} className="border-l-[3px] pl-3 py-1" style={{ borderColor: mapped.color }}>
                           <div className="flex justify-between items-center">
-                            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: mapped.color }}>
-                              {mapped.rule}
-                            </span>
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                              style={{ color: mapped.color, backgroundColor: `${mapped.color}20` }}>
-                              {mapped.weight}
-                            </span>
+                            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: mapped.color }}>{mapped.rule}</span>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ color: mapped.color, backgroundColor: `${mapped.color}20` }}>{mapped.weight}</span>
                           </div>
                           <div className="text-[11px] text-zinc-500 mt-0.5">{r}</div>
                         </div>
@@ -561,12 +683,8 @@ export default function TransactionInvestigation({ engine }) {
                     })}
                   </div>
                   <div className="pt-2 border-t border-[#1a2a3a] text-[10px] text-zinc-600 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <Lock size={9} />PII hashed with SHA-256 — raw identities never reached the model
-                    </div>
-                    {privacy?.dp_applied && (
-                      <div className="flex items-center gap-2"><Lock size={9} />Differential privacy noise applied</div>
-                    )}
+                    <div className="flex items-center gap-2"><Lock size={9} />PII hashed with SHA-256</div>
+                    {privacy?.dp_applied && <div className="flex items-center gap-2"><Lock size={9} />Differential privacy applied</div>}
                   </div>
                 </>
               )}
@@ -575,31 +693,19 @@ export default function TransactionInvestigation({ engine }) {
             {/* ── Card 4: SHAP Explainability ── */}
             <div className={card}>
               <div className={sectionTitle}>Ensemble SHAP Explanation</div>
-              <div className="text-[10px] text-zinc-600 mb-3">
-                Weighted feature attribution · LGB×0.55 + ISO×0.25 + BEH×0.20
-              </div>
               {scoring ? (
                 <div className="space-y-2">
                   {[1,2,3,4,5].map(i => <Skeleton key={i} className="h-6 w-full" />)}
                 </div>
               ) : !engineOnline ? (
-                <div className="text-[12px] text-zinc-600 py-4 text-center">
-                  SHAP unavailable — start backend to enable
-                </div>
+                <div className="text-[12px] text-zinc-600 py-4 text-center">SHAP unavailable — start backend</div>
               ) : !shapResult ? (
-                <div className="text-[12px] text-zinc-600 py-4 text-center">
-                  {selectedId ? 'Select a transaction to load SHAP explanation' : 'SHAP unavailable — start backend to enable'}
-                </div>
+                <div className="text-[12px] text-zinc-600 py-4 text-center">Loading explanation...</div>
               ) : (
                 <>
-                  {/* 4a — Waterfall */}
                   <ShapWaterfall topFeatures={shapResult.top_features} />
-
-                  {/* 4b — Behavioral Decomposition */}
                   <div className="mt-4 pt-4 border-t border-white/[0.06]">
-                    <div className="text-[10px] uppercase tracking-[0.12em] text-zinc-600 mb-3">
-                      Behavioral Rule Decomposition
-                    </div>
+                    <div className="text-[10px] uppercase tracking-[0.12em] text-zinc-600 mb-3">Behavioral Rule Decomposition</div>
                     <div className="space-y-2">
                       {[
                         { key: 'drain_to_unknown',      label: 'Drain → Unknown',  color: '#ef4444' },
@@ -615,125 +721,80 @@ export default function TransactionInvestigation({ engine }) {
                             <div className="flex-1 bg-white/[0.06] h-1.5 rounded-full overflow-hidden">
                               <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color, opacity: 0.7 }} />
                             </div>
-                            <span className="text-zinc-500 w-16 text-right">{val.toFixed(2)} × score</span>
+                            <span className="text-zinc-500 w-16 text-right">{val.toFixed(2)} pts</span>
                           </div>
                         )
                       })}
                     </div>
                   </div>
-
-                  {/* 4c — Model Agreement */}
-                  <div className="mt-3 pt-3 border-t border-[#1a2a3a] text-[11px]">
-                    {(() => {
-                      const delta = Math.abs(lgbScore - isoScore)
-                      const disagree = delta > 0.3
-                      return (
-                        <span className={disagree ? 'text-amber-400' : 'text-zinc-600'}>
-                          LGB says: {lgbScore.toFixed(2)} ({lgbScore > 0.7 ? 'HIGH' : lgbScore > 0.35 ? 'MED' : 'LOW'})
-                          {' · '}
-                          ISO says: {isoScore.toFixed(2)} ({isoScore > 0.7 ? 'HIGH' : isoScore > 0.35 ? 'MED' : 'LOW'})
-                          {' · '}
-                          Delta: ±{delta.toFixed(2)}
-                          {disagree && ' ⚠ Models disagree on this transaction'}
-                        </span>
-                      )
-                    })()}
-                  </div>
                 </>
               )}
+            </div>
+
+            {/* ═══ SECTION 3: GROUND TRUTH REFERENCE ═══ */}
+            <div className={card} style={{ borderLeft: `3px solid ${isFraud ? '#ff4d6d' : '#00e5a0'}` }}>
+              <div className={sectionTitle}>Ground Truth Reference</div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="font-mono text-[10px] text-text-muted/60 uppercase tracking-widest">True Label:</span>
+                <span className={clsx("font-mono text-[12px] font-bold", isFraud ? 'text-red-400' : 'text-emerald-400')}>
+                  {isFraud ? '🔴 FRAUD' : '✅ LEGIT'}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg mb-4 border" style={{ backgroundColor: `${verdictColor}10`, borderColor: `${verdictColor}30` }}>
+                <span className="text-[18px]">{verdictIcon}</span>
+                <span className="font-mono text-[14px] font-bold tracking-wider" style={{ color: verdictColor }}>{verdict}</span>
+              </div>
+
+              <div className="font-mono text-[10px] text-text-muted/60 mb-3">
+                {verdict === 'TRUE POSITIVE'  ? 'Fraud correctly blocked by model.' :
+                 verdict === 'TRUE NEGATIVE'  ? 'Legitimate transaction correctly approved.' :
+                 verdict === 'FALSE POSITIVE' ? 'Legit transaction incorrectly flagged.' :
+                 'Fraudulent transaction missed by model.'}
+              </div>
+
+              <div className="font-mono text-[9px] text-text-muted/50 uppercase tracking-widest mb-2">Evidence Bullets:</div>
+              <ul className="space-y-1.5">
+                {gtBullets.map((b, i) => (
+                  <li key={i} className="flex items-start gap-2 font-sans text-[11px] text-text-secondary leading-snug">
+                    <div className={clsx("w-1.5 h-1.5 rounded-full shrink-0 mt-1.5", isFraud ? 'bg-red-400' : 'bg-emerald-400')} />
+                    {b}
+                  </li>
+                ))}
+              </ul>
             </div>
 
             {/* ── Card 5: Admin Decision Panel ── */}
             <div className={card}>
               <div className={sectionTitle}>Admin Decision Panel</div>
-
-              {/* Locked — APPROVE or BLOCK */}
               {!isFlag && !isResolved && (
                 <div className="opacity-60">
-                  <div className="flex items-center gap-2 text-zinc-300 font-bold text-[13px] mb-3">
-                    <Lock size={15} />DECISION LOCKED — HIGH CONFIDENCE
-                  </div>
-                  <p className="text-[11px] text-zinc-500 mb-4 leading-relaxed">
-                    This transaction was automatically{' '}
-                    <span style={{ color: decisionColor(adminDecision) }} className="font-bold">[{adminDecision}]</span>{' '}
-                    by the model with a risk score of <span className="text-zinc-300">{riskScore}/100</span>.<br />
-                    Auto-decisions are made when the score falls outside the FLAG review threshold range.<br />
-                    Only FLAGGED transactions require admin review.
-                  </p>
-                  <div className="text-[10px] text-zinc-700 uppercase tracking-wider mb-2">Score Range</div>
-                  <ScoreRangeSVG score={riskScore} />
+                   <div className="flex items-center gap-2 text-zinc-300 font-bold text-[13px] mb-3"><Lock size={15} />DECISION LOCKED</div>
+                   <p className="text-[11px] text-zinc-500 mb-4 leading-relaxed">Only pending FLAG transactions require review.</p>
                 </div>
               )}
-
-              {/* Resolved */}
               {isResolved && (
-                <div className="space-y-3">
-                  <div className="border border-cyan-500/20 rounded-xl p-3 bg-cyan-500/[0.04] flex items-start gap-3">
-                    <Check size={16} className="text-cyan-400 shrink-0 mt-0.5" />
-                    <div className="font-mono">
-                      <div className="text-cyan-400 font-bold text-[11px] uppercase tracking-wider mb-1">Resolved by Admin</div>
-                      <div className="text-[10px] text-zinc-500">
-                        {new Date(decisions[selected.id].timestamp).toTimeString().split(' ')[0]}
-                        {' · '}FLAG → {decisions[selected.id].decision}
-                      </div>
-                      <div className="text-[11px] text-zinc-300 mt-1 italic">
-                        "{decisions[selected.id].reason}"
-                      </div>
-                    </div>
+                <div className="border border-cyan-500/20 rounded-xl p-3 bg-cyan-500/[0.04] flex items-start gap-3">
+                  <Check size={16} className="text-cyan-400 shrink-0 mt-0.5" />
+                  <div className="font-mono">
+                    <div className="text-cyan-400 font-bold text-[11px] uppercase mb-1">Resolved by Admin</div>
+                    <div className="text-[11px] text-zinc-300 italic">"{decisions[selected.id].reason}"</div>
                   </div>
                 </div>
               )}
-
-              {/* FLAG — actionable */}
               {isFlag && (
                 <div className="border border-amber-500/30 bg-amber-500/[0.04] rounded-xl p-4">
-                  <div className="flex items-center gap-2 text-amber-400 mb-2">
-                    <AlertTriangle size={16} />
-                    <span className="font-bold text-[13px] uppercase tracking-wider">Pending Admin Review</span>
-                  </div>
-                  <p className="text-[11px] text-zinc-500 mb-4">
-                    Model confidence is insufficient to auto-decide. Your review is required.
-                  </p>
-
                   {!resolvingState ? (
                     <div className="flex gap-3">
-                      <button
-                        onClick={() => setResolvingState('APPROVE')}
-                        className="flex-1 border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 font-bold text-[12px] uppercase py-2.5 rounded-xl hover:bg-emerald-500/20 transition-colors flex items-center justify-center gap-2"
-                      >
-                        <Check size={14} /> Approve Transaction
-                      </button>
-                      <button
-                        onClick={() => setResolvingState('BLOCK')}
-                        className="flex-1 border border-red-500/40 bg-red-500/10 text-red-400 font-bold text-[12px] uppercase py-2.5 rounded-xl hover:bg-red-500/20 transition-colors flex items-center justify-center gap-2"
-                      >
-                        <X size={14} /> Block Transaction
-                      </button>
+                      <button onClick={() => setResolvingState('APPROVE')} className="flex-1 bg-emerald-500/10 text-emerald-400 font-bold text-[11px] py-2 rounded-lg border border-emerald-500/30">APPROVE</button>
+                      <button onClick={() => setResolvingState('BLOCK')} className="flex-1 bg-red-500/10 text-red-400 font-bold text-[11px] py-2 rounded-lg border border-red-500/30">BLOCK</button>
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      <div>
-                        <label className="block text-[10px] text-zinc-500 uppercase tracking-wider mb-1">
-                          Reason for {resolvingState}ing (Required)
-                        </label>
-                        <input
-                          autoFocus
-                          value={adminReason}
-                          onChange={e => setAdminReason(e.target.value)}
-                          placeholder="E.g., Suspicious receiver — new recipient draining pattern"
-                          className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg p-2.5 text-[12px] text-zinc-200 focus:outline-none focus:border-cyan-500/50"
-                        />
-                      </div>
+                      <input autoFocus value={adminReason} onChange={e => setAdminReason(e.target.value)} placeholder="Reason for decision..." className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg p-2 text-[12px] text-zinc-200 focus:outline-none" />
                       <div className="flex gap-3">
-                        <button
-                          onClick={() => handleResolve(resolvingState)}
-                          disabled={!adminReason.trim()}
-                          className="flex-1 bg-cyan-500 text-zinc-900 font-bold text-[12px] uppercase py-2.5 rounded-xl hover:bg-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                        >Confirm</button>
-                        <button
-                          onClick={() => { setResolvingState(null); setAdminReason('') }}
-                          className="px-5 bg-white/[0.06] text-zinc-300 font-bold text-[12px] uppercase py-2.5 rounded-xl hover:bg-white/[0.10] transition-colors"
-                        >Cancel</button>
+                        <button onClick={() => handleResolve(resolvingState)} disabled={!adminReason.trim()} className="flex-1 bg-cyan-500 text-zinc-900 font-bold text-[11px] py-2 rounded-lg">Confirm</button>
+                        <button onClick={() => setResolvingState(null)} className="px-4 bg-white/[0.06] text-zinc-300 text-[11px] py-2 rounded-lg">Cancel</button>
                       </div>
                     </div>
                   )}
@@ -743,69 +804,17 @@ export default function TransactionInvestigation({ engine }) {
 
             {/* ── Card 6: Model Feedback Loop ── */}
             {(feedbackAnim === 'pulsing' || (feedbackAnim === 'done' && impactSim)) && (
-              <div className={clsx(
-                card, 'transition-all duration-300',
-                feedbackAnim === 'pulsing'
-                  ? 'border-amber-500/50 animate-pulse'
-                  : 'border-emerald-500/30'
-              )}>
-                {feedbackAnim === 'pulsing' && (
-                  <>
-                    <div className="flex items-center gap-2 text-amber-400 font-bold text-[12px] uppercase tracking-wider mb-3">
-                      <Loader2 size={14} className="animate-spin" />
-                      Sending Feedback to Model...
+              <div className={clsx(card, 'transition-all duration-300', feedbackAnim === 'pulsing' ? 'border-amber-500/50 animate-pulse' : 'border-emerald-500/30')}>
+                {feedbackAnim === 'pulsing' ? (
+                   <div className="flex items-center gap-2 text-amber-400 font-bold text-[11px]"><Loader2 size={14} className="animate-spin" /> Retraining Simulation...</div>
+                ) : (
+                  <div className="space-y-3 text-[11px]">
+                    <div className="text-emerald-400 font-bold">Feedback Received</div>
+                    <div className="flex justify-between border-t border-white/5 pt-2">
+                       <span className="text-zinc-500">Threshold Adjustment:</span>
+                       <span className={clsx('font-bold', impactSim.thresholdDelta < 0 ? 'text-red-400' : 'text-emerald-400')}>{impactSim.thresholdDelta > 0 ? '+' : ''}{impactSim.thresholdDelta} pts</span>
                     </div>
-                    <div className="h-1.5 w-full bg-white/[0.06] rounded-full overflow-hidden">
-                      <div className="h-full bg-amber-500 w-2/3 animate-pulse" />
-                    </div>
-                  </>
-                )}
-
-                {feedbackAnim === 'done' && impactSim && (
-                  <>
-                    <div className="flex items-center gap-2 text-emerald-400 font-bold text-[12px] uppercase tracking-wider mb-3">
-                      <Check size={14} />Model Feedback Received
-                    </div>
-                    <div className="space-y-3 text-[11px]">
-                      <div className="flex items-center justify-between border-b border-white/[0.06] pb-2">
-                        <span className="text-zinc-500">Label added to training buffer:</span>
-                        <span className={clsx(
-                          'font-bold px-2 py-0.5 rounded text-[10px]',
-                          decisions[selected.id]?.decision === 'BLOCK'
-                            ? 'bg-red-500/10 text-red-400'
-                            : 'bg-emerald-500/10 text-emerald-400'
-                        )}>
-                          {selected.id} → {decisions[selected.id]?.decision === 'BLOCK' ? 'CONFIRMED FRAUD' : 'CONFIRMED LEGITIMATE'}
-                        </span>
-                      </div>
-                      <div>
-                        <div className="text-cyan-400 font-bold text-[10px] uppercase tracking-wider mb-2">Impact Simulation</div>
-                        <div className="grid grid-cols-3 gap-3 bg-white/[0.03] border border-white/[0.06] rounded-xl p-3">
-                          <div>
-                            <div className="text-[9px] text-zinc-600 uppercase mb-1">Similar in Buffer</div>
-                            <div className="text-[18px] font-bold text-zinc-200">{impactSim.similarCount}</div>
-                          </div>
-                          <div>
-                            <div className="text-[9px] text-zinc-600 uppercase mb-1">Threshold Adj.</div>
-                            <div className={clsx(
-                              'text-[18px] font-bold',
-                              impactSim.thresholdDelta < 0 ? 'text-red-400' : 'text-emerald-400'
-                            )}>
-                              {impactSim.thresholdDelta > 0 ? '+' : ''}{impactSim.thresholdDelta} pts
-                            </div>
-                          </div>
-                          <div>
-                            <div className="text-[9px] text-zinc-600 uppercase mb-1">Next Retrain</div>
-                            <div className="text-[12px] font-bold text-zinc-400">Scheduled</div>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-zinc-600 text-[10px] italic text-center leading-relaxed">
-                        "Your feedback helps the model learn to auto-decide similar cases in future"<br />
-                        <span className="text-amber-600">⚠ Simulation only — actual retraining requires full pipeline</span>
-                      </div>
-                    </div>
-                  </>
+                  </div>
                 )}
               </div>
             )}

@@ -5,8 +5,10 @@ import { formatCurrency, formatTime } from '../../utils/formatters'
 import clsx from 'clsx'
 import DrillDownPanel from './DrillDownPanel'
 
-export default function TransactionFeed({ transactions, totalTotalBufferCount = 500, engineOnline = true }) {
-  const [selectedTxn, setSelectedTxn] = useState(null)
+export default function TransactionFeed({ transactions, totalTotalBufferCount = 500, engineOnline = true, engine, className }) {
+  // Use engine-managed selection if available
+  const selectedTxn = engine?.selectedTxn
+  const setSelectedTxn = (txn) => engine?.setSelectedTxn?.(txn)
 
   // ─── Fix 4: Offline banner ──────────────────────────────────────────────
   if (!engineOnline) {
@@ -41,15 +43,17 @@ export default function TransactionFeed({ transactions, totalTotalBufferCount = 
   }
 
   return (
-    <>
-      <Panel className="col-span-1 h-[500px] border border-border"
-        action={<span className="font-mono text-[10px] text-text-muted">{totalTotalBufferCount} in buffer</span>}
-      >
-        <div className="flex items-center gap-2 mb-4">
+    <Panel 
+      className={clsx("flex-1 border border-border", className)}
+      title={
+        <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse-slow shadow-glow-approve" />
-          <h3 className="section-label">LIVE TRANSACTION STREAM</h3>
+          <span className="section-label">LIVE TRANSACTION STREAM</span>
         </div>
-
+      }
+      action={<span className="font-mono text-[10px] text-text-muted">{totalTotalBufferCount} in buffer</span>}
+    >
+      <div className="flex flex-col h-full">
         {/* Table Header */}
         <div className="grid grid-cols-12 gap-2 pb-2 mb-2 border-b border-border text-[10px] font-mono font-bold uppercase tracking-[0.15em] text-text-muted select-none">
           <div className="col-span-2">Time</div>
@@ -60,13 +64,14 @@ export default function TransactionFeed({ transactions, totalTotalBufferCount = 
         </div>
 
         {/* Scrollable Body */}
-        <div className="overflow-y-auto h-[380px] -mx-2 px-2 custom-scrollbar">
+        <div className="overflow-y-auto flex-1 h-0 -mx-2 px-2 custom-scrollbar">
           {transactions.map((txn, idx) => (
             <div
               key={`${txn.id}-${new Date(txn.timestamp).getTime()}`}
               onClick={() => setSelectedTxn(txn)}
               className={clsx(
                 "grid grid-cols-12 gap-2 items-center py-2.5 px-2 rounded-xl text-[12px] font-mono hover:bg-bg-200 cursor-pointer transition-colors duration-150 group",
+                selectedTxn?.id === txn.id && "bg-bg-200 ring-1 ring-inset ring-border",
                 idx === 0 && "animate-slide-in"
               )}
             >
@@ -74,7 +79,7 @@ export default function TransactionFeed({ transactions, totalTotalBufferCount = 
               <div className="col-span-2 text-text-primary font-bold">{txn.id.slice(4, 10)}</div>
               <div className="col-span-3 text-text-secondary truncate pr-2">{txn.userId}</div>
               <div className="col-span-3 text-right text-text-primary font-bold pl-2">
-                {formatCurrency(txn.amount)}
+                {formatCurrency(txn.amount).replace('MYR', 'RM')}
               </div>
               <div className="col-span-2 text-right">
                 <Badge decision={txn.decision} />
@@ -82,11 +87,7 @@ export default function TransactionFeed({ transactions, totalTotalBufferCount = 
             </div>
           ))}
         </div>
-      </Panel>
-
-      {selectedTxn && (
-        <DrillDownPanel txn={selectedTxn} onClose={() => setSelectedTxn(null)} />
-      )}
-    </>
+      </div>
+    </Panel>
   )
 }

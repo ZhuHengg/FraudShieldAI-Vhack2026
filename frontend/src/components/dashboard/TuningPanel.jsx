@@ -1,10 +1,11 @@
 import React from 'react'
 import Panel from '../shared/Panel'
 import { Zap, RefreshCcw } from 'lucide-react'
+import clsx from 'clsx'
 
 export default function TuningPanel({ 
   params, updateParam, weights, thresholds, 
-  triggerAttackBurst, resetParams 
+  triggerAttackBurst, resetParams, className
 }) {
   const SliderRow = ({ label, value, keyName, min, max, step }) => {
     const pct = ((value - min) / (max - min)) * 100
@@ -49,7 +50,7 @@ export default function TuningPanel({
   const wBeh = weights?.beh ?? 0.20
 
   return (
-    <Panel className="border border-border">
+    <Panel className={clsx("border border-border shrink-0", className)}>
       <div className="flex justify-between items-center mb-6">
         <h3 className="section-label">Simulation Tuning</h3>
       </div>

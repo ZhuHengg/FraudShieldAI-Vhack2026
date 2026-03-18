@@ -90,7 +90,7 @@
   background: var(--text-muted); 
 }
 
-/* Slider Track CSS overrides */
+/* Slider Track CSS — per-model color support */
 input[type=range] {
   -webkit-appearance: none;
   background: transparent;
@@ -100,10 +100,10 @@ input[type=range]::-webkit-slider-thumb {
   height: 14px;
   width: 14px;
   border-radius: 50%;
-  background: var(--text-primary);
+  background: var(--slider-color, var(--text-primary));
   cursor: pointer;
   margin-top: -5px;
-  box-shadow: 0 0 0 2px var(--cyan-500), 0 0 10px rgba(6,182,212,0.5);
+  box-shadow: 0 0 6px var(--slider-color, var(--cyan-500));
 }
 input[type=range]::-webkit-slider-runnable-track {
   width: 100%;
@@ -112,3 +112,8 @@ input[type=range]::-webkit-slider-runnable-track {
   background: var(--bg-300);
   border-radius: 4px;
 }
+.slider-lgb     { --slider-color: #00e5ff; }
+.slider-iso     { --slider-color: #9c27b0; }
+.slider-beh     { --slider-color: #ff9800; }
+.slider-approve { --slider-color: #00e5a0; }
+.slider-flag    { --slider-color: #ff9800; }

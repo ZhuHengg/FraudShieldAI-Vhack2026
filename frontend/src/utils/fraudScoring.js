@@ -29,16 +29,34 @@ export function generateTransaction(template = 'normal', smoteLevel = 0.3) {
 
   // Amount & Type per template
   let amount, transfer_type
+
+  // Helper to generate realistic amounts based on type and attack statys
+  const generateAmount = (type, isAttackEvent = false) => {
+    if (isAttackEvent) {
+      const userAvg = 200; // assume typical user avg
+      // Generate amounts that are 3x-15x the typical average
+      return userAvg * (3 + Math.random() * 12);
+    }
+    
+    const ranges = {
+      'PAYMENT':  [10, 300],    // daily purchases
+      'TRANSFER': [50, 2000],   // P2P transfers  
+      'CASH_OUT': [100, 1000],  // ATM-equivalent
+    };
+    const [min, max] = ranges[type] || [50, 500];
+    return parseFloat((min + Math.random() * (max - min)).toFixed(2));
+  }
+
   if (isSuspicious) {
-    amount = parseFloat(randFloat(5000, 50000).toFixed(2))
     transfer_type = 'CASH_OUT'
+    amount = parseFloat(randFloat(5000, 20000).toFixed(2)) // Keep suspicious high but bounded
   } else if (isAttack) {
-    amount = parseFloat(randFloat(10000, 25000).toFixed(2))
     transfer_type = 'CASH_OUT'
+    amount = generateAmount(transfer_type, true)
   } else {
     // Normal
-    amount = parseFloat(randFloat(100, 500).toFixed(2))
-    transfer_type = 'TRANSFER'
+    transfer_type = pick(['TRANSFER', 'PAYMENT', 'CASH_OUT'])
+    amount = generateAmount(transfer_type, false)
   }
 
   // 30-day average
@@ -55,29 +73,37 @@ export function generateTransaction(template = 'normal', smoteLevel = 0.3) {
   const transaction_hour = hour
   const is_weekend       = [0, 6].includes(dow) ? 1 : 0
 
+  // --- Introduce Stochastic Overlap (Noise) ---
+  // ~15% chance a normal user exhibits a high-risk trait (e.g., using a VPN, fast session)
+  // ~10% chance a fraudster exhibits a normal trait (e.g., slow session, not drained)
+  const applyNoise = (highRiskVal, normalVal) => {
+      if (isHighRisk && Math.random() < 0.10) return normalVal();
+      if (!isHighRisk && Math.random() < 0.15) return highRiskVal();
+      return isHighRisk ? highRiskVal() : normalVal();
+  }
+
   // Security signals
-  const is_new_device    = isHighRisk ? (Math.random() > 0.4 ? 1 : 0) : (Math.random() > 0.95 ? 1 : 0)
-  const is_proxy_ip      = isHighRisk ? (Math.random() > 0.5 ? 1 : 0) : (Math.random() > 0.98 ? 1 : 0)
-  const ip_risk_score    = parseFloat(
-    isHighRisk
-      ? clamp(randFloat(0.5, 1.0) + Math.random() * smoteLevel * 0.4, 0, 1).toFixed(3)
-      : clamp(randFloat(0.0, 0.2), 0, 1).toFixed(3)
-  )
-  const failed_login_attempts = isHighRisk ? randInt(1, 5) : (Math.random() > 0.95 ? randInt(1, 2) : 0)
+  const is_new_device    = applyNoise(() => (Math.random() > 0.3 ? 1 : 0), () => (Math.random() > 0.95 ? 1 : 0));
+  const is_proxy_ip      = applyNoise(() => (Math.random() > 0.4 ? 1 : 0), () => (Math.random() > 0.90 ? 1 : 0)); // Normal users use VPNs too (~10%)
+  const ip_risk_score    = applyNoise(
+      () => clamp(randFloat(0.5, 1.0) + Math.random() * smoteLevel * 0.4, 0, 1).toFixed(3),
+      () => clamp(randFloat(0.0, 0.4), 0, 1).toFixed(3)
+  );
+  const failed_login_attempts = applyNoise(() => randInt(1, 4), () => (Math.random() > 0.9 ? randInt(1, 2) : 0));
 
   // Account status
-  const sender_account_fully_drained = isSuspicious || (isAttack && Math.random() > 0.3) ? 1 : (Math.random() > 0.98 ? 1 : 0)
-  const account_age_days             = isHighRisk ? randInt(1, 30)  : randInt(180, 2000)
-  const tx_count_24h                 = isHighRisk ? randInt(8, 25)  : randInt(1, 3)
+  const sender_account_fully_drained = applyNoise(() => (Math.random() > 0.4 ? 1 : 0), () => (Math.random() > 0.98 ? 1 : 0));
+  const account_age_days             = applyNoise(() => randInt(1, 30), () => randInt(90, 2000));
+  const tx_count_24h                 = applyNoise(() => randInt(8, 20), () => randInt(1, 4));
 
   // Trust profile
-  const country_mismatch              = isHighRisk ? (Math.random() > 0.6 ? 1 : 0) : (Math.random() > 0.95 ? 1 : 0)
-  const is_new_recipient              = isHighRisk ? (Math.random() > 0.7 ? 1 : 0) : (Math.random() > 0.90 ? 1 : 0)
+  const country_mismatch              = applyNoise(() => (Math.random() > 0.5 ? 1 : 0), () => (Math.random() > 0.90 ? 1 : 0));
+  const is_new_recipient              = applyNoise(() => (Math.random() > 0.6 ? 1 : 0), () => (Math.random() > 0.80 ? 1 : 0));
   const established_user_new_recipient = (account_age_days > 180 && is_new_recipient) ? 1 : 0
 
   // Missing fields from real dataset
-  const session_duration_seconds     = isHighRisk ? randInt(5, 45)      : randInt(120, 2400)
-  const recipient_risk_profile_score = isHighRisk ? randFloat(0.7, 1.0) : randFloat(0.0, 0.2)
+  const session_duration_seconds     = applyNoise(() => randInt(5, 60), () => randInt(120, 2400));
+  const recipient_risk_profile_score = applyNoise(() => randFloat(0.6, 1.0), () => randFloat(0.0, 0.3));
 
   // Sender balance simulation
   const sender_balance_before = parseFloat(randFloat(amount, amount * 1.5 + 500).toFixed(2))
