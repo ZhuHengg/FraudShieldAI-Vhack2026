@@ -88,9 +88,10 @@ class EnsembleEngine:
         else:
             df['log_avg_30d'] = df['log_amount']
 
-        if df['transfer_type_encoded'].iloc[0] == 0.0:
-            tx_type = str(df['transaction_type'].iloc[0]).upper()
-            df['transfer_type_encoded'] = 1 if tx_type == 'CASH_OUT' else 0
+        # Always derive transfer_type_encoded from transaction_type to match
+        # the LabelEncoder used during training: CASH_OUT=0, TRANSFER=1
+        tx_type = str(df['transaction_type'].iloc[0]).upper()
+        df['transfer_type_encoded'] = 0 if tx_type == 'CASH_OUT' else 1
 
         ts = pd.to_datetime(df['timestamp'], utc=True)
         df['transaction_hour'] = ts.dt.hour.iloc[0]
@@ -169,9 +170,6 @@ class EnsembleEngine:
             if col not in df_lgb.columns:
                 df_lgb[col] = 0.0
                 
-        # To silence sklearn feature name warnings, pass a numpy array to the scaler
-        # The scaler might expect specific feature names, but we only have `continuous_features`.
-        # To be safe and just silence the estimator warning later, we transform and assign back.
         df_lgb[continuous_features] = self.lgb_scaler.transform(df_lgb[continuous_features].values)
         
         # Column-alignment defensive step
@@ -185,7 +183,7 @@ class EnsembleEngine:
     def score_iso(self, X_iso: pd.DataFrame) -> float:
         raw_scores = -self.iso_model.decision_function(X_iso.values)
         risk_scores = self.iso_mms.transform(raw_scores.reshape(-1, 1)).flatten()
-        return risk_scores[0]
+        return float(np.clip(risk_scores[0], 0.0, 100.0))
 
     def score_lgb(self, X_lgb: pd.DataFrame) -> float:
         return self.lgb_model.predict_proba(X_lgb)[:, 1][0] * 100

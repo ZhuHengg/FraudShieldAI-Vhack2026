@@ -33,9 +33,9 @@ export function generateTransaction(template = 'normal', smoteLevel = 0.3) {
   // Helper to generate realistic amounts based on type and attack statys
   const generateAmount = (type, isAttackEvent = false) => {
     if (isAttackEvent) {
-      const userAvg = 200; // assume typical user avg
-      // Generate amounts that are 3x-15x the typical average
-      return userAvg * (3 + Math.random() * 12);
+      const userAvg = 500; // Boosted average
+      // Generate amounts that are strictly high out-of-bounds to trigger model (e.g. 10,000 to 45,000)
+      return userAvg * (20 + Math.random() * 70);
     }
     
     const ranges = {
@@ -86,8 +86,8 @@ export function generateTransaction(template = 'normal', smoteLevel = 0.3) {
   const is_new_device    = applyNoise(() => (Math.random() > 0.3 ? 1 : 0), () => (Math.random() > 0.95 ? 1 : 0));
   const is_proxy_ip      = applyNoise(() => (Math.random() > 0.4 ? 1 : 0), () => (Math.random() > 0.90 ? 1 : 0)); // Normal users use VPNs too (~10%)
   const ip_risk_score    = applyNoise(
-      () => clamp(randFloat(0.5, 1.0) + Math.random() * smoteLevel * 0.4, 0, 1).toFixed(3),
-      () => clamp(randFloat(0.0, 0.4), 0, 1).toFixed(3)
+      () => parseFloat(clamp(randFloat(0.5, 1.0) + Math.random() * smoteLevel * 0.4, 0, 1).toFixed(3)),
+      () => parseFloat(clamp(randFloat(0.0, 0.4), 0, 1).toFixed(3))
   );
   const failed_login_attempts = applyNoise(() => randInt(1, 4), () => (Math.random() > 0.9 ? randInt(1, 2) : 0));
 

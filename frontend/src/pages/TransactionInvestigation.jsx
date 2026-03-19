@@ -623,14 +623,6 @@ export default function TransactionInvestigation({ engine }) {
                         ))}
                     </div>
 
-                    <div className="bg-[#050505] border border-white/10 rounded-lg p-3 relative overflow-hidden">
-                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-[#4FC3F7] via-[#ce93d8] to-[#ffb74d] opacity-50" />
-                        <div className="font-mono text-[11px] leading-[1.6] pl-2 whitespace-pre-wrap break-all">
-                          (<span className="text-[#4FC3F7]">{(lgbScore * 100).toFixed(1)}</span>×0.55) +{' '}
-                          (<span className="text-[#ce93d8]">{(isoScore * 100).toFixed(1)}</span>×0.25) +<br />
-                          (<span className="text-[#ffb74d]">{(behScore * 100).toFixed(1)}</span>×0.20) = <span className="text-white font-bold">{riskScore.toFixed(1)}</span> → <span className="font-bold" style={{ color: riskColor(riskLevel) }}>{adminDecision}</span>
-                        </div>
-                    </div>
                   </>
                 )}
             </div>

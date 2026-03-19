@@ -107,7 +107,9 @@ export default function TransactionInspector({ selectedTxn, engine }) {
   // Ground truth
   const isFraud = selectedTxn.isFraud ?? false
   const groundTruth = isFraud ? "FRAUD" : "LEGIT"
-  const modelPredictedFraud = selectedTxn.decision !== 'APPROVE'
+  // Use the score-derived decision (decisionWord) not selectedTxn.decision
+  // so the verdict matches the score/gauge shown in the panel
+  const modelPredictedFraud = decisionWord !== 'APPROVE'
   let verdict, verdictColor, verdictIcon
   if (modelPredictedFraud && isFraud) { verdict = "TRUE POSITIVE"; verdictColor = "#10b981"; verdictIcon = "✅" }
   else if (!modelPredictedFraud && !isFraud) { verdict = "TRUE NEGATIVE"; verdictColor = "#10b981"; verdictIcon = "✅" }
@@ -349,15 +351,6 @@ export default function TransactionInspector({ selectedTxn, engine }) {
             ))}
           </div>
 
-          {/* Formula Block */}
-          <div className="bg-[#050505] border border-white/10 rounded-lg p-3 relative overflow-hidden">
-            <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-[#4FC3F7] via-[#ce93d8] to-[#ffb74d] opacity-50" />
-            <div className="font-mono text-[11px] leading-[1.6] pl-2 whitespace-pre-wrap break-all">
-              (<span className="text-[#4FC3F7]">{(lgbScore * 100).toFixed(1)}</span>×<span className="text-[#4FC3F7]">{w_lgb}</span>) +{' '}
-              (<span className="text-[#ce93d8]">{(isoScore * 100).toFixed(1)}</span>×<span className="text-[#ce93d8]">{w_iso}</span>) +<br />
-              (<span className="text-[#ffb74d]">{(behScore * 100).toFixed(1)}</span>×<span className="text-[#ffb74d]">{w_beh}</span>) = <span className="text-white font-bold">{score.toFixed(1)}</span> → <span className="font-bold" style={{ color: riskColor }}>{decisionWord}</span>
-            </div>
-          </div>
           <div className="mt-2 text-right font-mono text-[10px] text-text-muted/40">Scored in {latencyMs}ms</div>
         </div>
 

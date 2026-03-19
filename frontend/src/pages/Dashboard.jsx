@@ -130,7 +130,7 @@ export default function Dashboard({ engine }) {
               <FraudRateSparkline data={sparkline} />
             </Panel>
             <Panel title="Risk score distribution">
-              <ScoreHistogram data={histogram} threshold={thresholds?.approve ?? 0.35} bufferWidth={(thresholds?.block ?? 0.70) - (thresholds?.approve ?? 0.35)} />
+            <ScoreHistogram data={histogram} threshold={(thresholds?.approve ?? 35) / 100} bufferWidth={((thresholds?.block ?? 65) - (thresholds?.approve ?? 35)) / 100} />
             </Panel>
           </div>
           

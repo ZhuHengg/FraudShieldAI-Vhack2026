@@ -6,9 +6,10 @@ const PAGE_TITLES = {
   dashboard: 'Dashboard',
   search: 'TRANSACTION INVESTIGATION',
   radar: 'Risk Radar',
-  live: 'Live Simulator',
+
   analysis: 'Model Insights',
   simulator: 'Fraud Simulator',
+  lab: 'Transaction Lab',
 }
 
 export default function Header({ engine, activeTab }) {

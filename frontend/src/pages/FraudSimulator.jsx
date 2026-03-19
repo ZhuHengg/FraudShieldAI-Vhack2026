@@ -10,7 +10,7 @@ import {
   Settings2, Activity, Play, ShieldCheck, HelpCircle, Search, Scale, Minus, Star
 } from 'lucide-react'
 import clsx from 'clsx'
-import { useTransactionEngine } from '../hooks/useTransactionEngine'
+
 
 import {
   Chart as ChartJS, CategoryScale, LinearScale,
@@ -38,16 +38,11 @@ const GRID_C = 'rgba(255,255,255,0.07)'
 const TICK_C = 'rgba(255,255,255,0.35)'
 
 // ── Re-scoring ───────────────────────────────────────────
+// Handles both backend response fields (supervised_score) and engine fields (lgbScore)
 function rescore(txn, w, t) {
-  const lgb = (txn.supervised_score || 0) * 100
-  const iso = (txn.unsupervised_score || 0) * 100
-  const rb = txn.rule_breakdown || {}
-  const beh = (
-    ((rb.drain_score || 0) / BEH_W.drain) * BEH_W.drain +
-    ((rb.deviation_score || 0) / BEH_W.deviation) * BEH_W.deviation +
-    ((rb.context_score || 0) / BEH_W.context) * BEH_W.context +
-    ((rb.velocity_score || 0) / BEH_W.velocity) * BEH_W.velocity
-  ) * 100
+  const lgb = ((txn.supervised_score ?? txn.lgbScore) || 0) * 100
+  const iso = ((txn.unsupervised_score ?? txn.isoScore) || 0) * 100
+  const beh = ((txn.behavioral_score ?? txn.behScore) || 0) * 100
   const score = Math.min(100, Math.max(0, lgb * w.lgb + iso * w.iso + beh * w.beh))
   const dec = score < t.approve ? 'LOW' : score < t.flag ? 'MEDIUM' : 'HIGH'
   return { score, dec }
@@ -57,7 +52,8 @@ function calcMetrics(hist, w, t) {
   let TP = 0, FP = 0, TN = 0, FN = 0
   hist.forEach(txn => {
     const { dec } = rescore(txn, w, t)
-    const pF = dec === 'HIGH', aF = txn.ground_truth === 'FRAUD'
+    const pF = dec === 'HIGH'
+    const aF = txn.ground_truth === 'FRAUD' || txn.isFraud === true
     if (pF && aF) TP++; else if (pF && !aF) FP++
     else if (!pF && !aF) TN++; else FN++
   })
@@ -96,9 +92,9 @@ function findBlockBalance(curve) {
 }
 
 /* ══════ MAIN ══════════════════════════════════════════════ */
-export default function ModelTuningLab() {
-  const engine = useTransactionEngine()
-  const [buffer, setBuffer] = useState(() => [...(window.__fraudShieldStore?.txnHistory || [])])
+export default function ModelTuningLab({ engine }) {
+  const allTxns = engine?.allTransactions || []
+  const [buffer, setBuffer] = useState([])
   const [weights, setWeights] = useState({ ...DEPLOYED_W })
   const [thresholds, setThresholds] = useState({ ...DEPLOYED_T })
   const [applyState, setApplyState] = useState('idle')
@@ -106,12 +102,10 @@ export default function ModelTuningLab() {
   const [toast, setToast] = useState(null)
   const [balancePoints, setBalancePoints] = useState(null) // { approve: {...}, block: {...} }
 
-  // Subscribe to new txns
+  // Sync buffer with shared engine transactions
   useEffect(() => {
-    const h = () => setBuffer([...(window.__fraudShieldStore?.txnHistory || [])])
-    window.addEventListener('fraudshield:newtxn', h)
-    return () => window.removeEventListener('fraudshield:newtxn', h)
-  }, [])
+    setBuffer([...allTxns])
+  }, [allTxns])
 
   // Weight auto-balance
   const setWeight = useCallback((key, val) => {
@@ -143,7 +137,7 @@ export default function ModelTuningLab() {
     return { total, aToB, bToA }
   }, [buffer, weights, thresholds])
 
-  const hasLabels = buffer.filter(t => t.ground_truth).length >= 10
+  const hasLabels = buffer.filter(t => t.ground_truth || t.isFraud !== undefined).length >= 10
 
   // Threshold vs Metrics sweep
   const threshSweep = useMemo(() => {

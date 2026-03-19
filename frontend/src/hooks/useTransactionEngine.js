@@ -170,25 +170,31 @@ export function useTransactionEngine() {
           const scored = await res.json()
           
           // --- Model Tuning Lab Integration ---
-          // Use active tuning if applied, otherwise use config defaults
-          const tuning = window.__activeTuning || {
-            weights: { lgb: 0.55, iso: 0.25, beh: 0.20 },
-            thresholds: { approve: 35, flag: 60 }
-          };
+          // Only re-score if the user has explicitly applied custom tuning;
+          // otherwise passthrough the backend's own risk_score / risk_level.
+          const activeTuning = window.__activeTuning;
 
           const lgbScore = (scored.supervised_score || 0) * 100;
           const isoScore = (scored.unsupervised_score || 0) * 100;
           const behScore = (scored.behavioral_score || 0) * 100;
 
-          const tunedScore = Math.min(100, Math.max(0,
-            lgbScore * tuning.weights.lgb +
-            isoScore * tuning.weights.iso +
-            behScore * tuning.weights.beh
-          ));
-
-          const tunedDecision = 
-            tunedScore < tuning.thresholds.approve ? 'APPROVE' :
-            tunedScore < tuning.thresholds.flag    ? 'FLAG' : 'BLOCK';
+          let tunedScore, tunedDecision;
+          if (activeTuning) {
+            tunedScore = Math.min(100, Math.max(0,
+              lgbScore * activeTuning.weights.lgb +
+              isoScore * activeTuning.weights.iso +
+              behScore * activeTuning.weights.beh
+            ));
+            tunedDecision =
+              tunedScore < activeTuning.thresholds.approve ? 'APPROVE' :
+              tunedScore < activeTuning.thresholds.flag    ? 'FLAG' : 'BLOCK';
+          } else {
+            // Use backend's authoritative score and decision directly
+            tunedScore = scored.risk_score;
+            tunedDecision =
+              scored.risk_level === 'LOW' ? 'APPROVE' :
+              scored.risk_level === 'MEDIUM' ? 'FLAG' : 'BLOCK';
+          }
 
           const processed = {
             ...raw,
@@ -249,25 +255,7 @@ export function useTransactionEngine() {
       } catch (err) {
         if (err.name !== 'AbortError') {
           console.error('Prediction failed:', err)
-          // Fallback: Simulate scores if backend is offline so Tuning Lab still works
-          const isFraud = raw.isFraud || false;
-          const mockS = isFraud ? (0.6 + Math.random() * 0.4) : (Math.random() * 0.4);
-          const mockU = isFraud ? (0.5 + Math.random() * 0.5) : (Math.random() * 0.3);
-          const mockB = isFraud ? (0.4 + Math.random() * 0.6) : (Math.random() * 0.2);
-
-          const errorTx = {
-            ...raw,
-            supervised_score: mockS,
-            unsupervised_score: mockU,
-            behavioral_score: mockB,
-            ground_truth: isFraud ? 'FRAUD' : 'LEGIT',
-            decision: 'BLOCK', // Keep original fallback decision
-            riskLevel: 'HIGH',
-            reasons: ['Engine Offline (Mocked Scores)'],
-            scoredByBackend: false,
-          }
-          pushToGlobalStore(errorTx)
-          setAllTransactions(prev => [errorTx, ...prev].slice(0, 500))
+          // No mock data allowed on frontend. Transaction dropped if engine offline.
         }
       }
     }
@@ -303,9 +291,9 @@ export function useTransactionEngine() {
   const blocked = displayBlocked
 
   const avgLatency = useMemo(() => {
-    if (total === 0) return 0
-    return Math.round(allTransactions.reduce((s, t) => s + (t.latencyMs || 0), 0) / total)
-  }, [allTransactions, total])
+    if (allTransactions.length === 0) return 0
+    return Math.round(allTransactions.reduce((s, t) => s + (t.latencyMs || 0), 0) / allTransactions.length)
+  }, [allTransactions])
 
   // ─── Fix 6: Confusion matrix using real ground truth ──────────────────────
   const matrix = useMemo(() => {

@@ -51,6 +51,7 @@ app.add_middleware(
 
 @app.get("/api/v1/health")
 def health_check():
+    logger.info(f"Health check called. Engine is: {engine}, id: {id(engine)}")
     return {"status": "healthy", "engine_loaded": engine is not None}
 
 @app.get("/api/v1/config")
@@ -88,11 +89,6 @@ async def get_dashboard_stats(request: Request):
             avg_latency_ms=stats["latency_sum"] / total,
             fraud_rate_estimate=round(fraud_rate, 2)
         )
-@app.post("/api/v1/reset-stats")
-async def reset_stats(request: Request):
-    async with request.app.state.stats_lock:
-        request.app.state.stats = {"total": 0, "approve": 0, "flag": 0, "block": 0, "latency_sum": 0.0}
-    return {"status": "success", "message": "Stats reset"}
 
 @app.post("/predict", response_model=RiskResponse)
 @app.post("/api/v1/score-transaction", response_model=RiskResponse)

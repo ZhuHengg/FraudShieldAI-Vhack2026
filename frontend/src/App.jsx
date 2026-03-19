@@ -4,9 +4,10 @@ import Sidebar from './components/layout/Sidebar'
 import Dashboard from './pages/Dashboard'
 import TransactionInvestigation from './pages/TransactionInvestigation'
 import RiskRadar from './pages/RiskRadar'
-import LiveSimulator from './pages/LiveSimulator'
+
 import FraudAnalysis from './pages/FraudAnalysis'
 import FraudSimulator from './pages/FraudSimulator'
+import TransactionLab from './pages/TransactionLab'
 import { useTransactionEngine } from './hooks/useTransactionEngine'
 
 function App() {
@@ -22,9 +23,9 @@ function App() {
           {activeTab === 'dashboard' && <Dashboard engine={engine} />}
           {activeTab === 'search' && <TransactionInvestigation engine={engine} />}
           {activeTab === 'radar' && <RiskRadar engine={engine} />}
-          {activeTab === 'live' && <LiveSimulator engine={engine} />}
           {activeTab === 'analysis' && <FraudAnalysis engine={engine} />}
           {activeTab === 'simulator' && <FraudSimulator engine={engine} />}
+          {activeTab === 'lab' && <TransactionLab />}
         </main>
       </div>
     </div>
