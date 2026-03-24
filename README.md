@@ -236,8 +236,8 @@ Designed for **zero merge conflicts** — each ML engineer works in their own de
 
 ```text
 Vhack/
-├── backend/
-│   ├── api/
+├── backend/  # 👤 Zhu Heng/Daniel — backend
+│   ├── api/ 
 │   │   ├── main.py              # FastAPI app + route handlers
 │   │   ├── inference.py         # 🧠 EnsembleEngine (core ML pipeline)
 │   │   ├── schemas.py           # Pydantic request/response models
@@ -249,10 +249,10 @@ Vhack/
 │   │   └── ensemble/            # 🔗 Ensemble config & weights
 │   ├── data/                    # Training datasets
 │   └── requirements.txt         # Python dependencies
-├── frontend/
+├── frontend/          # 👤 Yeethong — frontend
 │   ├── src/
 │   │   ├── pages/
-│   │   │   ├── Dashboard.jsx            # 👤 Yeethong — KPI dashboard
+│   │   │   ├── Dashboard.jsx            
 │   │   │   ├── LiveSimulator.jsx        # Real-time transaction stream
 │   │   │   ├── TransactionInvestigation.jsx  # Case management + SHAP
 │   │   │   ├── RiskRadar.jsx            # Risk distribution heatmap
