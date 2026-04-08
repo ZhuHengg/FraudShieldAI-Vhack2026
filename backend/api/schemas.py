@@ -167,3 +167,39 @@ class RiskResponse(BaseModel):
                 }
             }
         }
+
+class TransactionLogCreate(BaseModel):
+    transaction_id: str
+    user_hash: str
+    recipient_hash: str
+    transfer_type: str
+    amount: float
+    avg_transaction_amount_30d: float
+    amount_vs_avg_ratio: float
+    transaction_hour: int
+    is_weekend: int
+    sender_account_fully_drained: int
+    is_new_device: int
+    session_duration_seconds: int
+    failed_login_attempts: int
+    is_proxy_ip: int
+    ip_risk_score: float
+    country_mismatch: int
+    account_age_days: int
+    tx_count_24h: int
+    is_new_recipient: int
+    established_user_new_recipient: int
+    recipient_risk_profile_score: float
+    is_fraud: int
+    action_taken: str
+    ml_risk_score: float
+    sender_balance_before: float
+    sender_balance_after: float
+    receiver_balance_before: float
+    receiver_balance_after: float
+    currency: str
+    country: str
+    device_type: str
+
+class TransactionLogResponse(TransactionLogCreate):
+    pass

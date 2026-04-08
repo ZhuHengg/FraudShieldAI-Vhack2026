@@ -1,7 +1,11 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from api.schemas import DashboardStats, TransactionRequest, RiskResponse, EnsembleSHAPResponse, TopFeature
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from api.schemas import DashboardStats, TransactionRequest, RiskResponse, EnsembleSHAPResponse, TopFeature, TransactionLogCreate, TransactionLogResponse
 from api.inference import EnsembleEngine
+from api.database import get_db
+from api.models import TransactionLog
 import pandas as pd
 import asyncio
 import time
@@ -194,3 +198,33 @@ async def explain_transaction(transaction_id: str, transaction: TransactionReque
     except Exception as e:
         logger.error(f"Failed to generate SHAP explanation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/transactions", status_code=201)
+def save_transaction(transaction: TransactionLogCreate, db: Session = Depends(get_db)):
+    """
+    Save a scored transaction to the database.
+    Silently ignores duplicates (by transaction_id).
+    """
+    try:
+        db_txn = TransactionLog(**transaction.model_dump())
+        db.add(db_txn)
+        db.commit()
+        return {"status": "success", "message": "Transaction saved"}
+    except IntegrityError:
+        # Transaction already exists, ignore
+        db.rollback()
+        return {"status": "success", "message": "Duplicate skipped"}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to save transaction: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save transaction: {str(e)}")
+
+@app.get("/api/v1/transactions", response_model=list[TransactionLogResponse])
+def get_transactions(limit: int = 200, db: Session = Depends(get_db)):
+    """
+    Fetch the most recent transactions from the database.
+    """
+    if limit > 500:
+        limit = 500
+    transactions = db.query(TransactionLog).order_by(TransactionLog.transaction_id.desc()).limit(limit).all()
+    return transactions
