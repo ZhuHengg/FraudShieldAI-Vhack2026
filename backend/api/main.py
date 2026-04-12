@@ -228,3 +228,19 @@ def get_transactions(limit: int = 200, db: Session = Depends(get_db)):
         limit = 500
     transactions = db.query(TransactionLog).order_by(TransactionLog.transaction_id.desc()).limit(limit).all()
     return transactions
+
+@app.get("/api/v1/transactions/search", response_model=list[TransactionLogResponse])
+def search_transactions(q: str = "", db: Session = Depends(get_db)):
+    """
+    Search transactions by ID, sender hash, or recipient hash.
+    """
+    if not q or len(q) < 3:
+        return []
+    
+    search_term = f"%{q}%"
+    transactions = db.query(TransactionLog).filter(
+        (TransactionLog.transaction_id.ilike(search_term)) |
+        (TransactionLog.user_hash.ilike(search_term)) |
+        (TransactionLog.recipient_hash.ilike(search_term))
+    ).order_by(TransactionLog.transaction_id.desc()).limit(50).all()
+    return transactions

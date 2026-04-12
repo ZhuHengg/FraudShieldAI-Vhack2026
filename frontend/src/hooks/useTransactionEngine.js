@@ -96,6 +96,83 @@ export function useTransactionEngine() {
     fetchConfig()
   }, [])
 
+  // ─── Initial Fetch of Transactions ──────────────────────────────────────────
+  useEffect(() => {
+    const fetchInitialTransactions = async () => {
+      try {
+        const res = await fetch('http://localhost:8000/api/v1/transactions');
+        if (res.ok) {
+          const data = await res.json();
+          const mappedTransactions = data.map(dbTx => {
+            const riskScore = dbTx.ml_risk_score * 100;
+            let riskLevel = 'LOW';
+            if (dbTx.action_taken === 'BLOCK') riskLevel = 'HIGH';
+            else if (dbTx.action_taken === 'FLAG') riskLevel = 'MEDIUM';
+
+            return {
+              transaction_id: dbTx.transaction_id,
+              id: dbTx.transaction_id,
+              name_sender: dbTx.user_hash,
+              userId: dbTx.user_hash,
+              name_recipient: dbTx.recipient_hash,
+              receiverId: dbTx.recipient_hash,
+              transfer_type: dbTx.transfer_type,
+              amount: dbTx.amount,
+              avg_transaction_amount_30d: dbTx.avg_transaction_amount_30d,
+              amount_vs_avg_ratio: dbTx.amount_vs_avg_ratio,
+              transaction_hour: dbTx.transaction_hour,
+              is_weekend: dbTx.is_weekend,
+              sender_account_fully_drained: dbTx.sender_account_fully_drained,
+              is_new_device: dbTx.is_new_device,
+              isNewDevice: dbTx.is_new_device,
+              session_duration_seconds: dbTx.session_duration_seconds,
+              sessionDurationSeconds: dbTx.session_duration_seconds,
+              failed_login_attempts: dbTx.failed_login_attempts,
+              is_proxy_ip: dbTx.is_proxy_ip,
+              isProxyIp: dbTx.is_proxy_ip,
+              ip_risk_score: dbTx.ip_risk_score,
+              ipRiskScore: dbTx.ip_risk_score,
+              country_mismatch: dbTx.country_mismatch,
+              countryMismatch: dbTx.country_mismatch,
+              account_age_days: dbTx.account_age_days,
+              accountAgeDays: dbTx.account_age_days,
+              tx_count_24h: dbTx.tx_count_24h,
+              txCount24h: dbTx.tx_count_24h,
+              is_new_recipient: dbTx.is_new_recipient,
+              isNewRecipient: dbTx.is_new_recipient,
+              established_user_new_recipient: dbTx.established_user_new_recipient,
+              recipient_risk_profile_score: dbTx.recipient_risk_profile_score,
+              isFraud: dbTx.is_fraud === 1,
+              decision: dbTx.action_taken,
+              riskLevel: riskLevel,
+              riskScore: riskScore,
+              ensembleScore: dbTx.ml_risk_score,
+              ground_truth: dbTx.is_fraud === 1 ? 'FRAUD' : 'LEGIT',
+              template: dbTx.is_fraud === 1 ? 'attack' : 'normal',
+              timestamp: new Date().toISOString(),
+              scoredByBackend: true,
+              sender_balance_before: dbTx.sender_balance_before,
+              sender_balance_after: dbTx.sender_balance_after,
+              receiver_balance_before: dbTx.receiver_balance_before,
+              receiver_balance_after: dbTx.receiver_balance_after,
+              currency: dbTx.currency,
+              country: dbTx.country,
+              deviceType: dbTx.device_type,
+            };
+          });
+          
+          setAllTransactions(mappedTransactions);
+          // Optional: also push to global store if needed for other tabs, though fetching on each tab works too.
+          window.__fraudShieldStore.txnHistory = [...mappedTransactions, ...window.__fraudShieldStore.txnHistory].slice(0, 500);
+        }
+      } catch (err) {
+        console.error("Failed to fetch initial transactions:", err);
+      }
+    };
+    
+    fetchInitialTransactions();
+  }, []);
+
   // ─── Fix 3: Backend-only transaction scoring loop ─────────────────────────
   useEffect(() => {
     if (!isRunning && attackQueue === 0) return
@@ -242,6 +319,46 @@ export function useTransactionEngine() {
           }
           pushToGlobalStore(processed)
           setAllTransactions(prev => [processed, ...prev].slice(0, 500))
+
+          // --- Save to Database ---
+          fetch('http://localhost:8000/api/v1/transactions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              transaction_id: raw.transaction_id,
+              user_hash: raw.name_sender,
+              recipient_hash: raw.name_recipient,
+              transfer_type: raw.transfer_type,
+              amount: raw.amount,
+              avg_transaction_amount_30d: raw.avg_transaction_amount_30d,
+              amount_vs_avg_ratio: raw.amount_vs_avg_ratio,
+              transaction_hour: raw.transaction_hour,
+              is_weekend: raw.is_weekend,
+              sender_account_fully_drained: raw.sender_account_fully_drained,
+              is_new_device: raw.is_new_device,
+              session_duration_seconds: raw.session_duration_seconds,
+              failed_login_attempts: raw.failed_login_attempts,
+              is_proxy_ip: raw.is_proxy_ip,
+              ip_risk_score: raw.ip_risk_score,
+              country_mismatch: raw.country_mismatch,
+              account_age_days: raw.account_age_days,
+              tx_count_24h: raw.tx_count_24h,
+              is_new_recipient: raw.is_new_recipient,
+              established_user_new_recipient: raw.established_user_new_recipient,
+              recipient_risk_profile_score: raw.recipient_risk_profile_score,
+              is_fraud: raw.isFraud ? 1 : 0,
+              action_taken: processed.decision,
+              ml_risk_score: processed.ensembleScore,
+              sender_balance_before: raw.sender_balance_before,
+              sender_balance_after: raw.sender_balance_after,
+              receiver_balance_before: raw.receiver_balance_before,
+              receiver_balance_after: raw.receiver_balance_after,
+              currency: raw.currency || 'MYR',
+              country: raw.country || 'MY',
+              device_type: raw.deviceType || 'Mobile'
+            })
+          }).catch(err => console.error("Failed to save transaction to DB", err));
+
         } else if (res.status === 503) {
           const errorTx = {
             ...raw,

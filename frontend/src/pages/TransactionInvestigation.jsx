@@ -184,6 +184,10 @@ export default function TransactionInvestigation({ engine }) {
   const [filter, setFilter]     = useState('ALL')
   const [sort, setSort]         = useState('Highest Risk')
 
+  // ── Search extensions ──
+  const [dbSearchResults, setDbSearchResults] = useState([])
+  const [isSearchingDb, setIsSearchingDb] = useState(false)
+
   // ── Right column state ──
   const [selectedId, setSelectedId]   = useState(null)
   const [riskResult, setRiskResult]   = useState(null)
@@ -218,9 +222,60 @@ export default function TransactionInvestigation({ engine }) {
     return () => clearInterval(interval)
   }, [])
 
+  // ── Debounced DB Search ──
+  useEffect(() => {
+    if (search.length < 3) {
+      setDbSearchResults([])
+      setIsSearchingDb(false)
+      return
+    }
+
+    const abortController = new AbortController()
+    const timer = setTimeout(async () => {
+      setIsSearchingDb(true)
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/transactions/search?q=${encodeURIComponent(search)}`, {
+          signal: abortController.signal
+        })
+        if (res.ok) {
+          const data = await res.json()
+          const mapped = data.map(dbTx => ({
+            ...dbTx,
+            id: dbTx.transaction_id,
+            userId: dbTx.user_hash,
+            receiverId: dbTx.recipient_hash,
+            amount: dbTx.amount,
+            timestamp: new Date().toISOString(),
+            decision: dbTx.action_taken,
+            ensembleScore: dbTx.ml_risk_score,
+            isFraud: dbTx.is_fraud === 1,
+            scoredByBackend: true,
+          }))
+          setDbSearchResults(mapped)
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') console.error('DB search fail:', err)
+      } finally {
+        setIsSearchingDb(false)
+      }
+    }, 300)
+
+    return () => {
+      clearTimeout(timer)
+      abortController.abort()
+    }
+  }, [search])
+
   // ── Derived left list ──
   const mappedTxns = useMemo(() => {
-    return allTransactions.map(t => {
+    const mergedMap = new Map()
+    allTransactions.forEach(t => mergedMap.set(t.id, t))
+    dbSearchResults.forEach(t => {
+      if (!mergedMap.has(t.id)) mergedMap.set(t.id, t)
+    })
+    const mergedList = Array.from(mergedMap.values())
+
+    return mergedList.map(t => {
       const ov = decisions[t.id]
       return {
         ...t,
@@ -228,7 +283,7 @@ export default function TransactionInvestigation({ engine }) {
         resolved: !!ov,
       }
     })
-  }, [allTransactions, decisions])
+  }, [allTransactions, dbSearchResults, decisions])
 
   const filteredTxns = useMemo(() => {
     let d = mappedTxns
@@ -421,8 +476,9 @@ export default function TransactionInvestigation({ engine }) {
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search TX ID or Sender/Receiver..."
-              className="w-full bg-bg-50 border border-border rounded-xl py-2 pl-9 pr-3 text-[12px] text-text-primary focus:outline-none focus:ring-1 focus:ring-cyan-500/50 placeholder:text-text-muted"
+              className="w-full bg-bg-50 border border-border rounded-xl py-2 pl-9 pr-9 text-[12px] text-text-primary focus:outline-none focus:ring-1 focus:ring-cyan-500/50 placeholder:text-text-muted"
             />
+            {isSearchingDb && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 text-cyan-500 animate-spin" size={14} />}
           </div>
 
           {/* Filter Pills */}
