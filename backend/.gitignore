@@ -17,6 +17,9 @@ env/
 # Data (too large for git)
 data/
 
+# report from Locust
+reports/
+
 # Model artifacts (too large for git)
 models/supervised/*.pkl
 models/unsupervised/*.pkl
