@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -136,7 +137,7 @@ async def predict_fraud(transaction: TransactionRequest, request: Request):
         
     start_time = time.time()
     
-    result = engine.predict(transaction)
+    result = await run_in_threadpool(engine.predict, transaction)
     
     latency_ms = (time.time() - start_time) * 1000
     
@@ -167,10 +168,11 @@ async def explain_transaction(transaction_id: str, transaction: TransactionReque
         raise HTTPException(status_code=503, detail="Risk Engine or SHAP explainer not fully initialized")
 
     try:
-        # 1. Prepare data using shared preprocessing
-        df = engine.preprocess(transaction.model_dump())
-        X_lgb = engine.get_lgb_features(df)
-        X_iso = engine.get_iso_features(df)
+        # 1. Prepare data using shared preprocessing (returns dict)
+        d = engine.preprocess(transaction.model_dump())
+        X_lgb_df = engine.get_lgb_features_df(d)   # DataFrame for SHAP column names
+        X_lgb = X_lgb_df.values                      # numpy for scoring
+        X_iso = engine.get_iso_features(d)
         
         # 2. Get Layer Scores
         # LightGBM score (probability * 100)
@@ -178,11 +180,11 @@ async def explain_transaction(transaction_id: str, transaction: TransactionReque
         # Isolation Forest score (scaled [0, 100])
         iso_score = engine.score_iso(X_iso)
         # Behavioral score (scaled [0, 100])
-        beh_score, _ = engine.score_beh(df)
+        beh_score, _ = engine.score_beh(d)
         
         # 3. Get LightGBM SHAP values
         # shap_values is an Explanation object
-        shap_explanation = engine.explainer(X_lgb)
+        shap_explanation = engine.explainer(X_lgb_df)
         lgb_base_value = float(shap_explanation.base_values[0])
         lgb_contributions = shap_explanation.values[0]
         
@@ -195,7 +197,7 @@ async def explain_transaction(transaction_id: str, transaction: TransactionReque
         # LightGBM contributes its SHAP values * its ensemble weight
         weighted_contributions = {
             feat: float(val) * w_lgb 
-            for feat, val in zip(X_lgb.columns, lgb_contributions)
+            for feat, val in zip(X_lgb_df.columns, lgb_contributions)
         }
         
         # Add proxy contributions for Unsupervised and Behavioral layers

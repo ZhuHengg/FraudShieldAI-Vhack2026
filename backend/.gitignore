@@ -31,6 +31,13 @@ graphs/
 
 # Pytest
 .pytest_cache/
+# report from Locust
+reports/
+
+# Model artifacts (too large for git)
+models/supervised/*.pkl
+models/unsupervised/*.pkl
+models/ensemble/*.pkl
 
 # Jupyter
 .ipynb_checkpoints/
