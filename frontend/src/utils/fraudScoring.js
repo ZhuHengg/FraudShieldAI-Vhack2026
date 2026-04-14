@@ -114,6 +114,23 @@ export function generateTransaction(template = 'normal', smoteLevel = 0.3) {
   const receiver_balance_before = parseFloat(randFloat(100, 10000).toFixed(2))
   const receiver_balance_after  = parseFloat((receiver_balance_before + amount).toFixed(2))
 
+  // ── Feature-based ground truth ─────────────────────────────────────────────
+  // Instead of using the template type as ground truth (which is unreliable due
+  // to noise injection), we derive fraud labels from the ACTUAL feature values
+  // generated.  A transaction is fraud if it exhibits ≥3 genuine risk signals.
+  const riskSignals = [
+    sender_account_fully_drained === 1 && is_new_recipient === 1,   // drain-to-unknown
+    amount_vs_avg_ratio > 5,                                        // extreme amount deviation
+    ip_risk_score > 0.6,                                            // high IP risk
+    is_proxy_ip === 1 && country_mismatch === 1,                    // proxy + foreign
+    is_new_device === 1 && country_mismatch === 1,                  // new device + foreign
+    tx_count_24h > 8,                                               // velocity spike
+    session_duration_seconds < 30 && failed_login_attempts >= 2,    // rushed + failed logins
+    account_age_days < 14 && amount > 3000,                         // new account + large amount
+  ]
+  const riskCount = riskSignals.filter(Boolean).length
+  const isFraud = riskCount >= 3
+
   const txn = {
     transaction_id, name_sender, name_recipient, transfer_type, amount,
     avg_transaction_amount_30d, amount_vs_avg_ratio,
@@ -134,8 +151,9 @@ export function generateTransaction(template = 'normal', smoteLevel = 0.3) {
     country: pick(['MY', 'SG', 'TH', 'ID', 'PH', 'VN', 'MM', 'KH']),
     deviceType: pick(['Mobile', 'Desktop', 'Tablet', 'API-Direct']),
 
-    // Ground truth
-    isFraud: isHighRisk,
+    // Ground truth — feature-based, not template-based
+    isFraud,
+    riskSignalCount: riskCount,
     template,
   }
 

@@ -121,8 +121,8 @@ function ShapWaterfall({ topFeatures }) {
   const data = topFeatures.map(f => ({
     name: f.feature.replace(/_/g, ' '),
     fullName: f.feature,
-    value: f.shap_value,
-    actual: f.actual_value,
+    value: f.contribution ?? f.shap_value ?? 0,
+    actual: f.actual_value ?? 'N/A',
   }))
 
   const CustomTooltip = ({ active, payload }) => {
@@ -756,12 +756,12 @@ export default function TransactionInvestigation({ engine }) {
                     <div className="text-[10px] uppercase tracking-[0.12em] text-zinc-600 mb-3">Behavioral Rule Decomposition</div>
                     <div className="space-y-2">
                       {[
-                        { key: 'drain_to_unknown',      label: 'Drain → Unknown',  color: '#ef4444' },
-                        { key: 'high_amount_deviation',  label: 'Amt Deviation',    color: '#f59e0b' },
-                        { key: 'risky_context',          label: 'Risky Context',    color: '#a855f7' },
-                        { key: 'rapid_session',          label: 'Rapid Session',    color: '#00d4ff' },
+                        { key: 'drain_score',      label: 'Drain → Unknown',  color: '#ef4444' },
+                        { key: 'deviation_score',  label: 'Amt Deviation',    color: '#f59e0b' },
+                        { key: 'context_score',          label: 'Risky Context',    color: '#a855f7' },
+                        { key: 'velocity_score',          label: 'Rapid Session',    color: '#00d4ff' },
                       ].map(({ key, label, color }) => {
-                        const val = shapResult.beh_contributions?.[key] ?? 0
+                        const val = riskResult?.rule_breakdown?.[key] ?? 0
                         const pct = Math.min(100, val * 100)
                         return (
                           <div key={key} className="flex items-center gap-3 text-[11px]">

@@ -2,7 +2,11 @@ from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from api.schemas import DashboardStats, TransactionRequest, RiskResponse, EnsembleSHAPResponse, TopFeature, TransactionLogCreate, TransactionLogResponse
+from api.schemas import (
+    DashboardStats, TransactionRequest, RiskResponse, EnsembleSHAPResponse,
+    TopFeature, TransactionLogCreate, TransactionLogResponse,
+    AnalystFeedback, FeedbackStatsResponse, RetrainRequest, RetrainResponse
+)
 from api.inference import EnsembleEngine
 from api.database import get_db
 from api.models import TransactionLog
@@ -10,6 +14,7 @@ import pandas as pd
 import asyncio
 import time
 import logging
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +39,31 @@ async def lifespan(app: FastAPI):
         )
     except Exception as e:
         logger.error(f"Failed to load models during startup: {e}")
+
+    # Initialize DB tables (creates them if they don't exist)
+    try:
+        from api.database import init_db, engine as db_engine, SQLALCHEMY_DATABASE_URL
+        init_db()
+        logger.info(f"Database initialized ({SQLALCHEMY_DATABASE_URL[:30]}...)")
+
+        # For existing tables, try to add new columns (safe to fail if they already exist)
+        from sqlalchemy import text
+        new_cols = {
+            'analyst_label': 'VARCHAR' if 'sqlite' not in SQLALCHEMY_DATABASE_URL else 'TEXT',
+            'analyst_notes': 'VARCHAR' if 'sqlite' not in SQLALCHEMY_DATABASE_URL else 'TEXT',
+            'labeled_at': 'VARCHAR' if 'sqlite' not in SQLALCHEMY_DATABASE_URL else 'TEXT',
+        }
+        with db_engine.connect() as conn:
+            for col_name, col_type in new_cols.items():
+                try:
+                    conn.execute(text(f'ALTER TABLE transaction_logs ADD COLUMN {col_name} {col_type}'))
+                    logger.info(f"Added column '{col_name}' to transaction_logs")
+                except Exception:
+                    pass  # Column already exists
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"DB init: {e}")
+
     yield
     # shutdown (add cleanup here if needed)
 
@@ -228,6 +258,106 @@ def get_transactions(limit: int = 200, db: Session = Depends(get_db)):
         limit = 500
     transactions = db.query(TransactionLog).order_by(TransactionLog.transaction_id.desc()).limit(limit).all()
     return transactions
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CLOSED-LOOP RETRAINING ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/v1/feedback")
+def save_feedback(feedback: AnalystFeedback, db: Session = Depends(get_db)):
+    """
+    Save analyst feedback (FRAUD/LEGIT label) for a transaction.
+    This is the core of the closed-loop system.
+    """
+    if feedback.analyst_label not in ('FRAUD', 'LEGIT'):
+        raise HTTPException(status_code=400, detail="analyst_label must be 'FRAUD' or 'LEGIT'")
+
+    txn = db.query(TransactionLog).filter(
+        TransactionLog.transaction_id == feedback.transaction_id
+    ).first()
+
+    if not txn:
+        raise HTTPException(status_code=404, detail=f"Transaction '{feedback.transaction_id}' not found")
+
+    txn.analyst_label = feedback.analyst_label
+    txn.analyst_notes = feedback.analyst_notes
+    txn.labeled_at = datetime.now(timezone.utc).isoformat()
+
+    try:
+        db.commit()
+        return {
+            "status": "success",
+            "message": f"Transaction {feedback.transaction_id} labeled as {feedback.analyst_label}",
+            "labeled_at": txn.labeled_at,
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to save feedback: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/feedback/stats", response_model=FeedbackStatsResponse)
+def get_feedback_stats(db: Session = Depends(get_db)):
+    """
+    Get labeling progress statistics — how many transactions are
+    labeled vs unlabeled, and whether we have enough to retrain.
+    """
+    from sqlalchemy import func
+
+    total = db.query(func.count(TransactionLog.transaction_id)).scalar() or 0
+    labeled = db.query(func.count(TransactionLog.transaction_id)).filter(
+        TransactionLog.analyst_label.isnot(None)
+    ).scalar() or 0
+    fraud_labels = db.query(func.count(TransactionLog.transaction_id)).filter(
+        TransactionLog.analyst_label == 'FRAUD'
+    ).scalar() or 0
+    legit_labels = db.query(func.count(TransactionLog.transaction_id)).filter(
+        TransactionLog.analyst_label == 'LEGIT'
+    ).scalar() or 0
+
+    min_needed = 50
+    return FeedbackStatsResponse(
+        total_transactions=total,
+        labeled_count=labeled,
+        unlabeled_count=total - labeled,
+        fraud_labels=fraud_labels,
+        legit_labels=legit_labels,
+        ready_to_retrain=labeled >= min_needed and fraud_labels >= 5 and legit_labels >= 5,
+        min_samples_needed=min_needed,
+    )
+
+
+@app.post("/api/v1/retrain", response_model=RetrainResponse)
+async def trigger_retrain(request: RetrainRequest, db: Session = Depends(get_db)):
+    """
+    Trigger closed-loop retraining using analyst-labeled transactions.
+    Re-optimizes ensemble weights and thresholds, then hot-reloads the engine.
+    """
+    if engine is None:
+        raise HTTPException(status_code=503, detail="Engine not initialized")
+
+    try:
+        from api.retrain import run_retrain
+        result = run_retrain(engine, db, min_samples=request.min_labeled_samples)
+        return RetrainResponse(**result)
+    except Exception as e:
+        logger.error(f"Retraining failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Retraining failed: {str(e)}")
+
+
+@app.get("/api/v1/transactions/unlabeled", response_model=list[TransactionLogResponse])
+def get_unlabeled_transactions(limit: int = 50, db: Session = Depends(get_db)):
+    """
+    Fetch transactions that have NOT been labeled by an analyst yet.
+    Prioritizes high-risk transactions (ml_risk_score DESC) for efficient labeling.
+    """
+    if limit > 200:
+        limit = 200
+    txns = db.query(TransactionLog).filter(
+        TransactionLog.analyst_label.is_(None)
+    ).order_by(TransactionLog.ml_risk_score.desc()).limit(limit).all()
+    return txns
 
 @app.get("/api/v1/transactions/search", response_model=list[TransactionLogResponse])
 def search_transactions(q: str = "", db: Session = Depends(get_db)):

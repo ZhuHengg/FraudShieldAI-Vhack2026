@@ -8,6 +8,7 @@ import RiskRadar from './pages/RiskRadar'
 import FraudAnalysis from './pages/FraudAnalysis'
 import FraudSimulator from './pages/FraudSimulator'
 import TransactionLab from './pages/TransactionLab'
+import RetrainPanel from './pages/RetrainPanel'
 import { useTransactionEngine } from './hooks/useTransactionEngine'
 
 function App() {
@@ -26,6 +27,7 @@ function App() {
           {activeTab === 'analysis' && <FraudAnalysis engine={engine} />}
           {activeTab === 'simulator' && <FraudSimulator engine={engine} />}
           {activeTab === 'lab' && <TransactionLab />}
+          {activeTab === 'retrain' && <RetrainPanel />}
         </main>
       </div>
     </div>

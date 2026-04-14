@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
 dist/
 build/
@@ -13,14 +14,23 @@ env/
 
 # Environment Variables
 .env
+.env.*
+!.env.example
 
 # Data (too large for git)
 data/
 
-# Model artifacts (too large for git)
-models/supervised/*.pkl
-models/unsupervised/*.pkl
-models/ensemble/*.pkl
+# Model artifacts & outputs (generated, too large for git)
+models/**/outputs/
+
+# Generated graphs
+graphs/
+
+# Database
+*.db
+
+# Pytest
+.pytest_cache/
 
 # Jupyter
 .ipynb_checkpoints/

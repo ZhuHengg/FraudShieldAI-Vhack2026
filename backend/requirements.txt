@@ -19,6 +19,11 @@ lightgbm>=4.0
 imbalanced-learn>=0.11
 shap>=0.44.0
 
+# ==============================
+# Database (Neon PostgreSQL)
+# ==============================
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
 
 # ==============================
 # Utilities

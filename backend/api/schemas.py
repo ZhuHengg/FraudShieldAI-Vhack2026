@@ -202,4 +202,46 @@ class TransactionLogCreate(BaseModel):
     device_type: str
 
 class TransactionLogResponse(TransactionLogCreate):
-    pass
+    analyst_label: Optional[str] = None
+    analyst_notes: Optional[str] = None
+    labeled_at: Optional[str] = None
+
+# ── Closed-Loop Retraining Schemas ────────────────────────────────────────────
+
+class AnalystFeedback(BaseModel):
+    """Submit human feedback for a transaction."""
+    transaction_id: str
+    analyst_label: str = Field(..., description="'FRAUD' or 'LEGIT'")
+    analyst_notes: Optional[str] = None
+
+class FeedbackStatsResponse(BaseModel):
+    """Summary of labeling progress for retraining readiness."""
+    total_transactions: int
+    labeled_count: int
+    unlabeled_count: int
+    fraud_labels: int
+    legit_labels: int
+    ready_to_retrain: bool
+    min_samples_needed: int = 50
+
+class RetrainRequest(BaseModel):
+    """Parameters for the retraining pipeline."""
+    min_labeled_samples: int = Field(50, ge=10, description="Minimum labeled samples required.")
+
+class RetrainResponse(BaseModel):
+    """Results of a retraining run."""
+    status: str
+    samples_used: int
+    old_weights: dict
+    new_weights: dict
+    old_thresholds: dict
+    new_thresholds: dict
+    old_f1: float
+    new_f1: float
+    improvement_pct: float
+    message: str
+
+class InvestigateRequest(BaseModel):
+    """Free-form investigation query."""
+    query: str
+    context: Optional[dict] = None

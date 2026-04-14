@@ -320,44 +320,46 @@ export function useTransactionEngine() {
           pushToGlobalStore(processed)
           setAllTransactions(prev => [processed, ...prev].slice(0, 500))
 
-          // --- Save to Database ---
-          fetch('http://localhost:8000/api/v1/transactions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              transaction_id: raw.transaction_id,
-              user_hash: raw.name_sender,
-              recipient_hash: raw.name_recipient,
-              transfer_type: raw.transfer_type,
-              amount: raw.amount,
-              avg_transaction_amount_30d: raw.avg_transaction_amount_30d,
-              amount_vs_avg_ratio: raw.amount_vs_avg_ratio,
-              transaction_hour: raw.transaction_hour,
-              is_weekend: raw.is_weekend,
-              sender_account_fully_drained: raw.sender_account_fully_drained,
-              is_new_device: raw.is_new_device,
-              session_duration_seconds: raw.session_duration_seconds,
-              failed_login_attempts: raw.failed_login_attempts,
-              is_proxy_ip: raw.is_proxy_ip,
-              ip_risk_score: raw.ip_risk_score,
-              country_mismatch: raw.country_mismatch,
-              account_age_days: raw.account_age_days,
-              tx_count_24h: raw.tx_count_24h,
-              is_new_recipient: raw.is_new_recipient,
-              established_user_new_recipient: raw.established_user_new_recipient,
-              recipient_risk_profile_score: raw.recipient_risk_profile_score,
-              is_fraud: raw.isFraud ? 1 : 0,
-              action_taken: processed.decision,
-              ml_risk_score: processed.ensembleScore,
-              sender_balance_before: raw.sender_balance_before,
-              sender_balance_after: raw.sender_balance_after,
-              receiver_balance_before: raw.receiver_balance_before,
-              receiver_balance_after: raw.receiver_balance_after,
-              currency: raw.currency || 'MYR',
-              country: raw.country || 'MY',
-              device_type: raw.deviceType || 'Mobile'
-            })
-          }).catch(err => console.error("Failed to save transaction to DB", err));
+          // Fire-and-forget: save to Neon DB for closed-loop retraining
+          try {
+            fetch('http://localhost:8000/api/v1/transactions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                transaction_id: raw.transaction_id || raw.id,
+                user_hash: raw.name_sender || raw.userId || '',
+                recipient_hash: raw.name_recipient || raw.receiverId || '',
+                transfer_type: raw.transfer_type || raw.transaction_type || 'TRANSFER',
+                amount: raw.amount || 0,
+                avg_transaction_amount_30d: raw.avg_transaction_amount_30d || 0,
+                amount_vs_avg_ratio: raw.amount_vs_avg_ratio || 1,
+                transaction_hour: raw.transaction_hour || new Date().getHours(),
+                is_weekend: raw.is_weekend || 0,
+                sender_account_fully_drained: raw.sender_account_fully_drained || 0,
+                is_new_device: raw.is_new_device || 0,
+                session_duration_seconds: raw.session_duration_seconds || 0,
+                failed_login_attempts: raw.failed_login_attempts || 0,
+                is_proxy_ip: raw.is_proxy_ip || 0,
+                ip_risk_score: raw.ip_risk_score || 0,
+                country_mismatch: raw.country_mismatch || 0,
+                account_age_days: raw.account_age_days || 0,
+                tx_count_24h: raw.tx_count_24h || 0,
+                is_new_recipient: raw.is_new_recipient || 0,
+                established_user_new_recipient: raw.established_user_new_recipient || 0,
+                recipient_risk_profile_score: raw.recipient_risk_profile_score || 0,
+                is_fraud: raw.isFraud ? 1 : 0,
+                action_taken: tunedDecision,
+                ml_risk_score: (tunedScore / 100),
+                sender_balance_before: raw.sender_balance_before || 0,
+                sender_balance_after: raw.sender_balance_after || 0,
+                receiver_balance_before: raw.receiver_balance_before || 0,
+                receiver_balance_after: raw.receiver_balance_after || 0,
+                currency: raw.currency || 'MYR',
+                country: raw.country || 'MY',
+                device_type: raw.deviceType || 'Mobile',
+              }),
+            }).catch(() => {}) // silently ignore save errors
+          } catch {}
 
         } else if (res.status === 503) {
           const errorTx = {

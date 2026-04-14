@@ -108,8 +108,8 @@ function ShapWaterfall({ topFeatures }) {
   const data = topFeatures.map(f => ({
     name: f.feature.replace(/_/g, ' ').substring(0, 22),
     fullName: f.feature,
-    value: f.shap_value,
-    actual: f.actual_value,
+    value: f.contribution ?? f.shap_value ?? 0,
+    actual: f.actual_value ?? 'N/A',
   }))
 
   return (

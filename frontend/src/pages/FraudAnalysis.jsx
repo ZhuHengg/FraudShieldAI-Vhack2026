@@ -39,6 +39,9 @@ export default function FraudAnalysis({ engine }) {
 
   // --- STATE ---
   const [weights, setWeights] = useState({ lgb: 0.55, iso: 0.25, beh: 0.20 })
+  // Positive prediction mode: 'block_flag' = count both BLOCK+FLAG as fraud prediction
+  // 'block_only' = only BLOCK counts as fraud prediction
+  const [positivePredMode, setPositivePredMode] = useState('block_flag')
   const [thresholds, setThresholds] = useState({ approve: 35, flag: 60 })
 
   const handleWeightChange = (key, value) => {
@@ -108,8 +111,10 @@ export default function FraudAnalysis({ engine }) {
       else if (decision === 'FLAG') flag++
       else block++
 
-      // For precision/recall: BLOCK is Positive prediction
-      const predictedFraud = decision === 'BLOCK'
+      // Positive prediction: FLAG+BLOCK or BLOCK-only based on admin toggle
+      const predictedFraud = positivePredMode === 'block_flag'
+        ? (decision === 'BLOCK' || decision === 'FLAG')
+        : (decision === 'BLOCK')
       const actualFraud = !!t.isFraud
 
       if (predictedFraud && actualFraud) tp++
@@ -129,9 +134,10 @@ export default function FraudAnalysis({ engine }) {
       approvePct: (approve / len) * 100,
       flagPct: (flag / len) * 100,
       blockPct: (block / len) * 100,
-      precision, recall, fpr, f1 
+      precision, recall, fpr, f1,
+      tp, fp, fn, tn
     }
-  }, [allTxns, weights, thresholds])
+  }, [allTxns, weights, thresholds, positivePredMode])
 
   // Matrix calculations
   const matrixData = useMemo(() => {
@@ -406,11 +412,61 @@ export default function FraudAnalysis({ engine }) {
                   </div>
                 </div>
 
+                {/* Positive Prediction Mode Toggle */}
+                <div className="mt-3">
+                  <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-2">Positive Prediction = Fraud Detected</p>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setPositivePredMode('block_flag')}
+                      className={`flex-1 text-[9px] py-1.5 rounded-lg uppercase tracking-wider font-bold transition-all border ${
+                        positivePredMode === 'block_flag'
+                          ? 'bg-[rgba(0,229,255,0.15)] text-[#00e5ff] border-[rgba(0,229,255,0.4)]'
+                          : 'bg-transparent text-muted-foreground border-border hover:bg-bg-200'
+                      }`}
+                    >
+                      Block + Flag
+                    </button>
+                    <button
+                      onClick={() => setPositivePredMode('block_only')}
+                      className={`flex-1 text-[9px] py-1.5 rounded-lg uppercase tracking-wider font-bold transition-all border ${
+                        positivePredMode === 'block_only'
+                          ? 'bg-[rgba(239,68,68,0.15)] text-[#ef4444] border-[rgba(239,68,68,0.4)]'
+                          : 'bg-transparent text-muted-foreground border-border hover:bg-bg-200'
+                      }`}
+                    >
+                      Block Only
+                    </button>
+                  </div>
+                </div>
+
                 <div className="bg-bg-200 border border-border p-3 rounded-xl grid grid-cols-2 gap-3 mt-4">
                    <MetricRangeBar label="Precision" value={sim.precision} />
                    <MetricRangeBar label="Recall" value={sim.recall} />
                    <MetricRangeBar label="F-Pos Rate" value={sim.fpr} reverseRange />
                    <MetricRangeBar label="F1 Score" value={sim.f1} />
+                </div>
+
+                {/* Confusion Matrix */}
+                <div className="mt-2">
+                  <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-2">Confusion Matrix</p>
+                  <div className="grid grid-cols-2 gap-1">
+                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-2 text-center">
+                      <p className="text-[8px] text-emerald-400/70 uppercase tracking-wider">True Neg</p>
+                      <p className="text-lg font-bold text-emerald-400">{sim.tn}</p>
+                    </div>
+                    <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2 text-center">
+                      <p className="text-[8px] text-amber-400/70 uppercase tracking-wider">False Pos</p>
+                      <p className="text-lg font-bold text-amber-400">{sim.fp}</p>
+                    </div>
+                    <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-2 text-center">
+                      <p className="text-[8px] text-red-400/70 uppercase tracking-wider">False Neg</p>
+                      <p className="text-lg font-bold text-red-400">{sim.fn}</p>
+                    </div>
+                    <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-2 text-center">
+                      <p className="text-[8px] text-cyan-400/70 uppercase tracking-wider">True Pos</p>
+                      <p className="text-lg font-bold text-cyan-400">{sim.tp}</p>
+                    </div>
+                  </div>
                 </div>
               </div>
 

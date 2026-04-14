@@ -1,31 +1,40 @@
 # Dependencies
-node_modules
+node_modules/
+
+# Build output
 /dist
-/.env
+/build
+
+# Environment Variables
+.env
+.env.*
+!.env.example
 
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 
 # Runtime data
-pids
+pids/
 *.pid
 *.seed
 *.pid.lock
 
-# IDE - VS Code
+# Build artifacts / temp files
+build_*.txt
+
+# Editor / IDE
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
 .history
-
-# IDE - IntelliJ
-.idea
+.idea/
 
 # OS
 .DS_Store

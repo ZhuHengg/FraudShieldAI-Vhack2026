@@ -1,0 +1,22 @@
+# Environment Variables
+.env
+.env.*
+!.env.example
+
+# Data (too large for git)
+data/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-*
+
+# Gemini
+.gemini/

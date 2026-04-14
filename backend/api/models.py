@@ -48,3 +48,8 @@ class TransactionLog(Base):
     currency = Column(String)
     country = Column(String)
     device_type = Column(String)
+
+    # 8. Analyst Feedback — for closed-loop retraining
+    analyst_label = Column(String, nullable=True)      # "FRAUD" or "LEGIT" — human override
+    analyst_notes = Column(String, nullable=True)       # Free-text analyst notes
+    labeled_at = Column(String, nullable=True)          # ISO timestamp of when labeled
