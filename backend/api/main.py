@@ -87,7 +87,7 @@ app.add_middleware(
 @app.get("/api/v1/health")
 def health_check():
     logger.info(f"Health check called. Engine is: {engine}, id: {id(engine)}")
-    return {"status": "healthy", "engine_loaded": engine is not None}
+    return {"status": "ok", "engine_loaded": engine is not None}
 
 @app.get("/api/v1/config")
 def get_config():
