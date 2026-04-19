@@ -54,7 +54,7 @@ def main():
     # STEP 5: MODEL TRAINING (TRAIN ONLY)
     iso_model = IsolationForestModel(
         contamination=contamination,
-        n_estimators=200,
+        n_estimators=100,
         max_samples=512,
         max_features=0.5,
     )
@@ -128,7 +128,7 @@ def main():
     tier_summary.to_csv(tier_csv_path)
     print(f"Tier summary saved: {tier_csv_path}")
 
-    print("\n✅ Pipeline complete — all outputs saved under outputs/")
+    print("\n[DONE] Pipeline complete — all outputs saved under outputs/")
 
 if __name__ == "__main__":
     main()

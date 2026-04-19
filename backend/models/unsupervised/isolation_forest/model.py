@@ -76,10 +76,10 @@ class IsolationForestModel:
             (100 - optimal_threshold) * 0.5
         )
         print(f"Thresholds set from validation tuning:")
-        print(f"  Approve → below {self.approve_threshold:.2f}")
-        print(f"  Flag    → {self.approve_threshold:.2f} "
+        print(f"  Approve -> below {self.approve_threshold:.2f}")
+        print(f"  Flag    -> {self.approve_threshold:.2f} "
               f"to {self.flag_threshold:.2f}")
-        print(f"  Block   → above {self.flag_threshold:.2f}")
+        print(f"  Block   -> above {self.flag_threshold:.2f}")
 
     def predict(self, X: np.ndarray):
         """
