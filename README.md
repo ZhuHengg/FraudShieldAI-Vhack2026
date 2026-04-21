@@ -402,6 +402,17 @@ npm run dev
 ```
 Open [http://localhost:5173](http://localhost:5173) in your browser.
 
+### Start Load Test (Real-Time Dashboard)
+To run load tests and see the real-time dashboard:
+1. Ensure the **Backend API** is already running.
+2. Run the load test script from the project root:
+   ```bash
+   .\load-test-ui.ps1
+   ```
+3. Open [http://localhost:8089](http://localhost:8089) in your browser.
+4. Enter the number of users and spawn rate, then click **Start swarming**.
+   - **Host:** `http://localhost:8000` (pre-configured)
+
 ---
 
 ## 🔍 Case Management Dashboard
