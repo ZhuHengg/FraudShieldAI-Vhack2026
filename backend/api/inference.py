@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from api.schemas import TransactionRequest, RiskResponse, PrivacyInfo
 from api.behavioural import BehavioralProfiler
 from api.privacy import PrivacyProtector
+from api.velocity import RecipientVelocityTracker
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,10 @@ class EnsembleEngine:
         """
         self.profiler = BehavioralProfiler()
         self.privacy = PrivacyProtector()
+        self.velocity_tracker = RecipientVelocityTracker(
+            window_seconds=3600,   # 60-minute sliding window
+            sender_threshold=10,   # 10+ unique senders = mule
+        )
         self.user_avg_cache = {}  # In-memory cache for exponential moving average
         
         # Load Isolation Forest artifacts
@@ -248,6 +253,44 @@ class EnsembleEngine:
         score, reasons, _ = self._score_behavioral(d)
         return score, reasons
 
+    # ─── Static Rules Fallback (V4 Step 5 — last resort) ─────────────
+    @staticmethod
+    def _static_rules_score(d: dict) -> tuple:
+        """
+        Ultra-lightweight rules-based scoring when ALL models are down.
+        Returns (score_0_100, decision, reasons).
+        """
+        amount = d.get('amount', 0.0)
+        score = 0.0
+        reasons = []
+
+        if amount > 10000:
+            score += 40
+            reasons.append("High amount (>10K)")
+        if d.get('is_proxy_ip', 0):
+            score += 20
+            reasons.append("Proxy IP detected")
+        if d.get('sender_account_fully_drained', 0) and d.get('is_new_recipient', 0):
+            score += 30
+            reasons.append("Account drained to new recipient")
+        if d.get('country_mismatch', 0):
+            score += 10
+            reasons.append("Country mismatch")
+
+        score = min(score, 100.0)
+
+        # Conservative static thresholds
+        if amount < 1000 and score < 30:
+            decision = "LOW"
+        elif amount > 5000 or score >= 60:
+            decision = "HIGH"
+        else:
+            decision = "MEDIUM"
+
+        if not reasons:
+            reasons.append("Normal behavior pattern")
+        return score, decision, reasons
+
     # ─── Main prediction (hot path — zero Pandas) ─────────────────────
     def predict(self, txn: TransactionRequest) -> RiskResponse:
         from api.schemas import RuleBreakdown, FeatureSnapshot
@@ -255,23 +298,116 @@ class EnsembleEngine:
         # 1. Dict-based preprocessing (no DataFrame)
         d = self.preprocess(txn.model_dump())
 
-        # 2. Model Scoring (numpy arrays only)
-        X_iso = self.get_iso_features(d)
-        iso_score = self.score_iso(X_iso)
-        
-        X_lgb = self.get_lgb_features(d)
-        lgb_score = self.score_lgb(X_lgb)
-        
-        beh_score, beh_reasons, (drain_raw, dev_raw, ctx_raw, vel_raw) = self._score_behavioral(d)
-        reasons = [r for r in beh_reasons if "Normal behavior" not in r]
+        # ══ STEP 4: Anti-Mule Layer (Network Velocity Check) ═══════════════
+        sender_hash = d.get('sender_id', d.get('name_sender', 'unknown'))
+        receiver_hash = d.get('receiver_id', d.get('name_recipient', 'unknown'))
+        mule_result = self.velocity_tracker.check(sender_hash, receiver_hash)
+
+        if mule_result["mule_detected"]:
+            # SHORT-CIRCUIT: Mule network detected -> immediate BLOCK
+            logger.warning(f"MULE OVERRIDE: {txn.transaction_id} -> {mule_result['reason']}")
+            return RiskResponse(
+                transaction_id=txn.transaction_id,
+                risk_score=100.0,
+                risk_level="HIGH",
+                supervised_score=0.0,
+                unsupervised_score=0.0,
+                behavioral_score=0.0,
+                reasons=[mule_result["reason"]],
+                privacy=PrivacyInfo(pii_hashed=True, hash_algorithm="SHA-256", dp_applied=False),
+                mule_flag=True,
+                engine_mode="mule_override",
+                active_models=[],
+                calibration_source="mule_network_detection",
+            )
+
+        # ══ STEP 5: High-Availability Model Scoring with Fallback ════════
+        lgb_score = None
+        iso_score = None
+        beh_score = None
+        beh_reasons = []
+        drain_raw = dev_raw = ctx_raw = vel_raw = 0.0
+        active_models = []
+        engine_mode = "full"
+
+        # Try LightGBM (supervised)
+        try:
+            X_lgb = self.get_lgb_features(d)
+            lgb_score = self.score_lgb(X_lgb)
+            active_models.append("lgb")
+        except Exception as e:
+            logger.error(f"LightGBM FAILED for {txn.transaction_id}: {e}")
+            lgb_score = None
+
+        # Try Isolation Forest (unsupervised)
+        try:
+            X_iso = self.get_iso_features(d)
+            iso_score = self.score_iso(X_iso)
+            active_models.append("iso")
+        except Exception as e:
+            logger.error(f"IsolationForest FAILED for {txn.transaction_id}: {e}")
+            iso_score = None
+
+        # Try Behavioral (always available - pure rules, no model)
+        try:
+            beh_score, beh_reasons, (drain_raw, dev_raw, ctx_raw, vel_raw) = self._score_behavioral(d)
+            active_models.append("beh")
+        except Exception as e:
+            logger.error(f"Behavioral FAILED for {txn.transaction_id}: {e}")
+            beh_score = None
+
+        # ── Determine engine mode and fuse available scores ─────────────
+        if lgb_score is not None and iso_score is not None and beh_score is not None:
+            # All 3 models available -> full mode
+            engine_mode = "full"
+            final_score = (lgb_score * self.w_lgb) + (iso_score * self.w_iso) + (beh_score * self.w_beh)
+        elif lgb_score is not None and beh_score is not None and iso_score is None:
+            # ISO failed -> re-normalize LGB + BEH
+            engine_mode = "degraded_iso"
+            w_sum = self.w_lgb + self.w_beh
+            final_score = (lgb_score * (self.w_lgb / w_sum)) + (beh_score * (self.w_beh / w_sum))
+            logger.warning(f"Degraded mode (no ISO): {txn.transaction_id}")
+        elif iso_score is not None and beh_score is not None and lgb_score is None:
+            # LGB failed -> re-normalize ISO + BEH
+            engine_mode = "degraded_lgb"
+            w_sum = self.w_iso + self.w_beh
+            final_score = (iso_score * (self.w_iso / w_sum)) + (beh_score * (self.w_beh / w_sum))
+            logger.warning(f"Degraded mode (no LGB): {txn.transaction_id}")
+        elif beh_score is not None:
+            # Only behavioral available
+            engine_mode = "behavioral_only"
+            final_score = beh_score
+            logger.warning(f"Behavioral-only mode: {txn.transaction_id}")
+        else:
+            # ALL models failed -> static rules bypass
+            engine_mode = "static_rules"
+            static_score, static_decision, static_reasons = self._static_rules_score(d)
+            logger.error(f"ALL MODELS DOWN for {txn.transaction_id} -> static rules")
+            return RiskResponse(
+                transaction_id=txn.transaction_id,
+                risk_score=static_score,
+                risk_level=static_decision,
+                supervised_score=0.0,
+                unsupervised_score=0.0,
+                behavioral_score=0.0,
+                reasons=static_reasons,
+                privacy=PrivacyInfo(pii_hashed=True, hash_algorithm="SHA-256", dp_applied=False),
+                mule_flag=False,
+                engine_mode="static_rules",
+                active_models=[],
+                calibration_source="static_fallback",
+            )
+
+        final_score = float(np.clip(final_score, 0.0, 100.0))
+
+        # Clean up reasons
+        reasons = [r for r in (beh_reasons or []) if "Normal behavior" not in r]
         if not reasons:
             reasons.append("Normal behavior pattern")
-            
-        # 3. Fuse Scores
-        final_score = (lgb_score * self.w_lgb) + (iso_score * self.w_iso) + (beh_score * self.w_beh)
-        final_score = float(np.clip(final_score, 0.0, 100.0))
-        
-        # 4. Threshold Logic
+        if engine_mode != "full":
+            reasons.insert(0, f"[{engine_mode.upper()}] Some models unavailable")
+
+        # ══ STEP 6: Calibrated Threshold Logic ═══════════════════════════
         if final_score < self.approve_threshold:
             decision = "LOW"
         elif final_score < self.flag_threshold:
@@ -279,7 +415,12 @@ class EnsembleEngine:
         else:
             decision = "HIGH"
 
-        # 5. Rule Breakdown (reuses raw scores — no second profiler call)
+        # Determine calibration source from config
+        cal_source = self.ensemble_config.get('notes', {}).get(
+            'threshold_source', 'empirical_pr_curve'
+        )
+
+        # Rule Breakdown (reuses raw scores)
         rule_breakdown = RuleBreakdown(
             drain_score=float(np.round(drain_raw * self.profiler.rules['drain_to_unknown'], 4)),
             deviation_score=float(np.round(dev_raw * self.profiler.rules['high_amount_deviation'], 4)),
@@ -287,7 +428,7 @@ class EnsembleEngine:
             velocity_score=float(np.round(vel_raw * self.profiler.rules['rapid_session'], 4)),
         )
 
-        # 6. Feature Snapshot
+        # Feature Snapshot
         feature_snapshot = FeatureSnapshot(
             amount_vs_avg_ratio=float(d.get('amount_vs_avg_ratio', 0.0)),
             ip_risk_score=float(d.get('ip_risk_score', 0.0)),
@@ -301,16 +442,20 @@ class EnsembleEngine:
             is_proxy_ip=int(d.get('is_proxy_ip', 0)),
         )
             
-        # 7. Return enriched RiskResponse
+        # Return enriched RiskResponse with V4 fields
         return RiskResponse(
             transaction_id=txn.transaction_id,
             risk_score=float(np.round(final_score, 2)),
             risk_level=decision,
-            supervised_score=float(np.round(lgb_score / 100.0, 4)),
-            unsupervised_score=float(np.round(iso_score / 100.0, 4)),
-            behavioral_score=float(np.round(beh_score / 100.0, 4)),
+            supervised_score=float(np.round((lgb_score or 0.0) / 100.0, 4)),
+            unsupervised_score=float(np.round((iso_score or 0.0) / 100.0, 4)),
+            behavioral_score=float(np.round((beh_score or 0.0) / 100.0, 4)),
             reasons=reasons,
             privacy=PrivacyInfo(pii_hashed=True, hash_algorithm="SHA-256", dp_applied=False),
             rule_breakdown=rule_breakdown,
             feature_snapshot=feature_snapshot,
+            mule_flag=False,
+            engine_mode=engine_mode,
+            active_models=active_models,
+            calibration_source=cal_source,
         )

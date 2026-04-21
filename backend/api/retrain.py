@@ -7,6 +7,10 @@ transactions from the Neon database.
 Does NOT retrain the base LightGBM or IsolationForest models.
 Only re-tunes the fusion layer (weights + thresholds) based on
 human feedback, which is the safest and highest-impact approach.
+
+V4 Step 8: Quarantined labels are EXCLUDED from retraining.
+Only labels with quarantine_status = NULL (direct) or VALIDATED (passed checks)
+are used, preventing model poisoning from grooming attacks.
 """
 import numpy as np
 import pandas as pd
@@ -33,8 +37,15 @@ def fetch_labeled_data(db: Session):
     """
     from api.models import TransactionLog
 
+    # V4 Step 8: Exclude quarantined labels that haven't been validated
+    # Only use: NULL (direct analyst label) or VALIDATED (passed quarantine checks)
+    from sqlalchemy import or_
     rows = db.query(TransactionLog).filter(
-        TransactionLog.analyst_label.isnot(None)
+        TransactionLog.analyst_label.isnot(None),
+        or_(
+            TransactionLog.quarantine_status.is_(None),
+            TransactionLog.quarantine_status == 'VALIDATED',
+        )
     ).all()
 
     if not rows:
@@ -216,14 +227,23 @@ def run_retrain(engine, db: Session, min_samples: int = 50):
     # 6. Compute improvement
     improvement_pct = ((new_f1 - old_f1) / max(old_f1, 1e-6)) * 100
 
-    # 7. Save updated config
+    # 7. Compute calibration metrics at the new threshold (V4 Step 6)
+    from sklearn.metrics import precision_score, recall_score
+    new_fused = lgb_scores * new_weights['lgb'] + iso_scores * new_weights['iso'] + beh_scores * new_weights['beh']
+    new_pred = (new_fused >= new_threshold).astype(int)
+    cal_precision = float(precision_score(y_true, new_pred, zero_division=0))
+    cal_recall = float(recall_score(y_true, new_pred, zero_division=0))
+    cal_fpr = float(((new_pred == 1) & (y_true == 0)).sum() / max((y_true == 0).sum(), 1))
+
+    # 8. Save updated config
     config = {
         'weights': new_weights,
         'thresholds': new_thresholds,
         'validation_metrics': {
-            'precision': 0.0,  # Will be filled after full evaluation
-            'recall': 0.0,
+            'precision': cal_precision,
+            'recall': cal_recall,
             'f1': float(new_f1),
+            'fpr': cal_fpr,
         },
         'notes': {
             'weights_source': f'closed-loop grid search on {len(df)} analyst-labeled samples',

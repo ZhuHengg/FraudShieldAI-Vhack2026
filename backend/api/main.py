@@ -6,7 +6,8 @@ from sqlalchemy.exc import IntegrityError
 from api.schemas import (
     DashboardStats, TransactionRequest, RiskResponse, EnsembleSHAPResponse,
     TopFeature, TransactionLogCreate, TransactionLogResponse,
-    AnalystFeedback, FeedbackStatsResponse, RetrainRequest, RetrainResponse
+    AnalystFeedback, FeedbackStatsResponse, RetrainRequest, RetrainResponse,
+    QuarantineStatsResponse, QuarantineValidationResponse, CalibrationResponse
 )
 from api.inference import EnsembleEngine
 from api.database import get_db
@@ -53,6 +54,8 @@ async def lifespan(app: FastAPI):
             'analyst_label': 'VARCHAR' if 'sqlite' not in SQLALCHEMY_DATABASE_URL else 'TEXT',
             'analyst_notes': 'VARCHAR' if 'sqlite' not in SQLALCHEMY_DATABASE_URL else 'TEXT',
             'labeled_at': 'VARCHAR' if 'sqlite' not in SQLALCHEMY_DATABASE_URL else 'TEXT',
+            'quarantine_status': 'VARCHAR' if 'sqlite' not in SQLALCHEMY_DATABASE_URL else 'TEXT',
+            'quarantine_reason': 'VARCHAR' if 'sqlite' not in SQLALCHEMY_DATABASE_URL else 'TEXT',
         }
         with db_engine.connect() as conn:
             for col_name, col_type in new_cols.items():
@@ -286,12 +289,20 @@ def save_feedback(feedback: AnalystFeedback, db: Session = Depends(get_db)):
     txn.analyst_notes = feedback.analyst_notes
     txn.labeled_at = datetime.now(timezone.utc).isoformat()
 
+    # V4 Step 8: Auto-quarantine FLAG+LEGIT labels (potential grooming attacks)
+    from api.quarantine import should_quarantine
+    if should_quarantine(txn, txn.action_taken or ''):
+        txn.quarantine_status = 'QUARANTINED'
+        txn.quarantine_reason = 'Flagged transaction confirmed as LEGIT — quarantined for validation'
+        logger.info(f"Quarantined label for {feedback.transaction_id} (FLAG+LEGIT)")
+
     try:
         db.commit()
         return {
             "status": "success",
             "message": f"Transaction {feedback.transaction_id} labeled as {feedback.analyst_label}",
             "labeled_at": txn.labeled_at,
+            "quarantined": txn.quarantine_status == 'QUARANTINED',
         }
     except Exception as e:
         db.rollback()
@@ -376,3 +387,97 @@ def search_transactions(q: str = "", db: Session = Depends(get_db)):
         (TransactionLog.recipient_hash.ilike(search_term))
     ).order_by(TransactionLog.transaction_id.desc()).limit(50).all()
     return transactions
+
+
+# ==============================================================================
+# V4 STEP 4: ANTI-MULE VELOCITY ENDPOINTS
+# ==============================================================================
+
+@app.get("/api/v1/velocity/stats")
+def get_velocity_stats():
+    """Get anti-mule velocity tracker statistics."""
+    if engine is None:
+        raise HTTPException(status_code=503, detail="Engine not initialized")
+    return engine.velocity_tracker.get_stats()
+
+
+# ==============================================================================
+# V4 STEP 6: CALIBRATION ENDPOINT
+# ==============================================================================
+
+@app.get("/api/v1/calibration", response_model=CalibrationResponse)
+def get_calibration():
+    """
+    Expose current threshold calibration metadata.
+    Shows where thresholds came from (PR-curve, grid search, or defaults)
+    and the validation metrics at those thresholds.
+    """
+    if engine is None:
+        raise HTTPException(status_code=503, detail="Engine not initialized")
+
+    config = engine.ensemble_config
+    return CalibrationResponse(
+        approve_threshold=engine.approve_threshold,
+        flag_threshold=engine.flag_threshold,
+        calibration_source=config.get('notes', {}).get('threshold_source', 'empirical_pr_curve'),
+        weights={'lgb': engine.w_lgb, 'iso': engine.w_iso, 'beh': engine.w_beh},
+        validation_metrics=config.get('validation_metrics'),
+        retrain_metadata=config.get('retrain_metadata'),
+    )
+
+
+# ==============================================================================
+# V4 STEP 8: QUARANTINE ENDPOINTS
+# ==============================================================================
+
+@app.get("/api/v1/quarantine/stats", response_model=QuarantineStatsResponse)
+def get_quarantine_stats(db: Session = Depends(get_db)):
+    """
+    Get quarantine status breakdown across all labeled transactions.
+    """
+    from sqlalchemy import func
+
+    total_quarantined = db.query(func.count(TransactionLog.transaction_id)).filter(
+        TransactionLog.quarantine_status.isnot(None)
+    ).scalar() or 0
+
+    validated = db.query(func.count(TransactionLog.transaction_id)).filter(
+        TransactionLog.quarantine_status == 'VALIDATED'
+    ).scalar() or 0
+
+    rejected = db.query(func.count(TransactionLog.transaction_id)).filter(
+        TransactionLog.quarantine_status == 'REJECTED'
+    ).scalar() or 0
+
+    pending = db.query(func.count(TransactionLog.transaction_id)).filter(
+        TransactionLog.quarantine_status == 'QUARANTINED'
+    ).scalar() or 0
+
+    direct_labels = db.query(func.count(TransactionLog.transaction_id)).filter(
+        TransactionLog.analyst_label.isnot(None),
+        TransactionLog.quarantine_status.is_(None)
+    ).scalar() or 0
+
+    return QuarantineStatsResponse(
+        total_quarantined=total_quarantined,
+        validated=validated,
+        rejected=rejected,
+        pending=pending,
+        direct_labels=direct_labels,
+    )
+
+
+@app.post("/api/v1/quarantine/validate", response_model=QuarantineValidationResponse)
+def validate_quarantine(db: Session = Depends(get_db)):
+    """
+    Run validation on all QUARANTINED labels.
+    Checks biometric continuity, amount plausibility, and regional trends.
+    Labels that pass >= 2/3 checks graduate to VALIDATED; others are REJECTED.
+    """
+    try:
+        from api.quarantine import run_quarantine_validation
+        result = run_quarantine_validation(db)
+        return QuarantineValidationResponse(**result)
+    except Exception as e:
+        logger.error(f"Quarantine validation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Quarantine validation failed: {str(e)}")

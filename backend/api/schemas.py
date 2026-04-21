@@ -136,6 +136,12 @@ class RiskResponse(BaseModel):
     rule_breakdown: Optional[RuleBreakdown] = None
     feature_snapshot: Optional[FeatureSnapshot] = None
 
+    # V4 Architecture Fields
+    mule_flag: bool = Field(False, description="True if recipient mule network detected (Step 4)")
+    engine_mode: str = Field("full", description="Engine mode: full/degraded_iso/degraded_lgb/behavioral_only/static_rules (Step 5)")
+    active_models: list[str] = Field(default_factory=lambda: ["lgb", "iso", "beh"], description="Models that contributed to this score")
+    calibration_source: str = Field("empirical_pr_curve", description="Source of threshold calibration (Step 6)")
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -150,21 +156,10 @@ class RiskResponse(BaseModel):
                     "hash_algorithm": "SHA-256",
                     "dp_applied": False
                 },
-                "rule_breakdown": {
-                    "drain_score": 0.35,
-                    "deviation_score": 0.0,
-                    "context_score": 0.15,
-                    "velocity_score": 0.0
-                },
-                "feature_snapshot": {
-                    "amount_vs_avg_ratio": 2.3,
-                    "ip_risk_score": 0.7,
-                    "tx_count_24h": 8,
-                    "session_duration_seconds": 45,
-                    "is_new_device": 1,
-                    "country_mismatch": 0,
-                    "sender_fully_drained": 0
-                }
+                "mule_flag": False,
+                "engine_mode": "full",
+                "active_models": ["lgb", "iso", "beh"],
+                "calibration_source": "empirical_pr_curve"
             }
         }
 
@@ -245,3 +240,29 @@ class InvestigateRequest(BaseModel):
     """Free-form investigation query."""
     query: str
     context: Optional[dict] = None
+
+# ── Quarantine Schemas (V4 Step 8) ────────────────────────────────────────────
+
+class QuarantineStatsResponse(BaseModel):
+    """Summary of quarantine status across all labeled transactions."""
+    total_quarantined: int = 0
+    validated: int = 0
+    rejected: int = 0
+    pending: int = 0
+    direct_labels: int = 0  # Labels that bypassed quarantine
+
+class QuarantineValidationResponse(BaseModel):
+    """Result of running quarantine validation."""
+    total_quarantined: int
+    validated: int
+    rejected: int
+    results: list = Field(default_factory=list)
+
+class CalibrationResponse(BaseModel):
+    """Current threshold calibration metadata (V4 Step 6)."""
+    approve_threshold: float
+    flag_threshold: float
+    calibration_source: str
+    weights: dict
+    validation_metrics: Optional[dict] = None
+    retrain_metadata: Optional[dict] = None
