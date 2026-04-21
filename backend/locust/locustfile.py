@@ -109,7 +109,7 @@ class FraudShieldUser(HttpUser):
         """Lightweight health probe."""
         self.client.get("/api/v1/health", name="/health")
 
-    @tag("smoke", "core")
+    @tag("smoke", "core", "predict")
     @task(5)
     def score_transaction(self):
         """Primary ML inference endpoint — highest weight."""
