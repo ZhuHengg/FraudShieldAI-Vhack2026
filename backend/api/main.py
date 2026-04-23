@@ -1,5 +1,10 @@
 import json
 import os
+from dotenv import load_dotenv
+
+# Load .env from project root (2 dirs up from api/main.py)
+_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '.env')
+load_dotenv(os.path.normpath(_env_path), override=True)
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
@@ -688,7 +693,7 @@ def llm_status():
     has_key = bool(os.environ.get("GEMINI_API_KEY"))
     return {
         "available": has_key,
-        "model": "gemini-2.0-flash",
+        "model": "gemini-2.5-flash",
         "fallback": "rule-based-templates",
         "note": "Set GEMINI_API_KEY in .env to enable LLM features" if not has_key else "LLM ready"
     }

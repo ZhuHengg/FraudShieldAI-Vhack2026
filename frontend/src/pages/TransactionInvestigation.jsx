@@ -200,6 +200,13 @@ export default function TransactionInvestigation({ engine }) {
   const [feedbackAnim, setFeedbackAnim] = useState(null)       // 'pulsing' | 'done' | null
   const [impactSim, setImpactSim]     = useState(null)
 
+  // ── LLM Investigation ──
+  const [llmQuery, setLlmQuery]       = useState('')
+  const [llmResponse, setLlmResponse] = useState(null)
+  const [llmLoading, setLlmLoading]   = useState(false)
+  const [llmStatus, setLlmStatus]     = useState(null)  // { available, model, fallback }
+  const [llmExpanded, setLlmExpanded]  = useState(true)
+
   // ── Engine health ──
   const [engineOnline, setEngineOnline] = useState(true)
   const [healthLoading, setHealthLoading] = useState(true)
@@ -220,6 +227,17 @@ export default function TransactionInvestigation({ engine }) {
     check()
     interval = setInterval(check, 10000)
     return () => clearInterval(interval)
+  }, [])
+
+  // ── LLM Status Check ──
+  useEffect(() => {
+    const checkLlm = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/llm/status`)
+        if (res.ok) setLlmStatus(await res.json())
+      } catch { setLlmStatus(null) }
+    }
+    checkLlm()
   }, [])
 
   // ── Debounced DB Search ──
@@ -326,6 +344,8 @@ export default function TransactionInvestigation({ engine }) {
     setAdminReason('')
     setFeedbackAnim(null)
     setImpactSim(null)
+    setLlmResponse(null)
+    setLlmQuery('')
 
     if (!engineOnline) return
 
@@ -370,6 +390,40 @@ export default function TransactionInvestigation({ engine }) {
       setAdminReason('')
     }, 1500)
   }
+
+  // ── LLM Investigate Handler (must be after `selected` and `riskResult` are defined) ──
+  const handleInvestigate = useCallback(async (quickQuery) => {
+    const query = quickQuery || llmQuery
+    if (!query.trim() || !selected) return
+    setLlmLoading(true)
+    setLlmResponse(null)
+    try {
+      const body = {
+        query,
+        transaction_id: selected.id || selected.transaction_id,
+        context: riskResult ? {
+          ...riskResult,
+          feature_snapshot: riskResult.feature_snapshot || {},
+          rule_breakdown: riskResult.rule_breakdown || {},
+        } : null,
+      }
+      const res = await fetch(`${API_BASE}/api/v1/investigate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (res.ok) {
+        setLlmResponse(await res.json())
+      } else {
+        setLlmResponse({ response: 'Failed to get analysis. Please try again.', status: 'error' })
+      }
+    } catch (e) {
+      console.error('LLM investigate error:', e)
+      setLlmResponse({ response: 'Connection error. Is the backend running?', status: 'error' })
+    } finally {
+      setLlmLoading(false)
+    }
+  }, [llmQuery, selected, riskResult])
 
   // ── Derived risk values from backend OR mock fallback ──
   const riskScore = riskResult
@@ -850,7 +904,137 @@ export default function TransactionInvestigation({ engine }) {
               )}
             </div>
 
-            {/* ── Card 6: Model Feedback Loop ── */}
+            {/* ── Card 6: AI Investigation Assistant ── */}
+            <div className={clsx(card, 'border-purple-500/20')}>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className={sectionTitle + ' mb-0'}>AI Investigation Assistant</div>
+                  {llmStatus?.available ? (
+                    <span className="text-[8px] font-mono font-bold uppercase tracking-widest px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                      {llmStatus.model}
+                    </span>
+                  ) : (
+                    <span className="text-[8px] font-mono font-bold uppercase tracking-widest px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400">
+                      Fallback
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => setLlmExpanded(v => !v)}
+                  className="text-zinc-500 hover:text-zinc-300 transition-colors"
+                >
+                  {llmExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+              </div>
+
+              {llmExpanded && (
+                <div className="space-y-3">
+                  {/* Quick Actions */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      { label: 'Why this score?', q: 'Why did this transaction receive this risk score? Explain the key contributing factors.' },
+                      { label: 'Fraud pattern?', q: 'Does this transaction match any known fraud patterns like account takeover, phishing, or money mule operations?' },
+                      { label: 'Next steps', q: 'What concrete investigation steps should I take for this transaction?' },
+                      { label: 'False positive?', q: 'Could this be a false positive? What evidence supports or contradicts the fraud classification?' },
+                    ].map(({ label, q }) => (
+                      <button
+                        key={label}
+                        onClick={() => { setLlmQuery(q); handleInvestigate(q) }}
+                        disabled={llmLoading || !engineOnline}
+                        className="px-2 py-1 rounded-lg border text-[9px] uppercase tracking-wider font-bold transition-all
+                          bg-purple-500/5 border-purple-500/20 text-purple-300 hover:bg-purple-500/15 hover:border-purple-500/40
+                          disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Free-form Query */}
+                  <div className="flex gap-2">
+                    <input
+                      value={llmQuery}
+                      onChange={e => setLlmQuery(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleInvestigate()}
+                      placeholder="Ask about this transaction..."
+                      disabled={llmLoading || !engineOnline}
+                      className="flex-1 bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-zinc-200
+                        placeholder:text-zinc-600 focus:outline-none focus:border-purple-500/40 disabled:opacity-40"
+                    />
+                    <button
+                      onClick={() => handleInvestigate()}
+                      disabled={llmLoading || !llmQuery.trim() || !engineOnline}
+                      className="px-4 py-2 rounded-lg font-mono text-[10px] font-bold uppercase tracking-wider transition-all
+                        bg-gradient-to-r from-purple-600/80 to-cyan-600/80 text-white shadow-[0_0_12px_rgba(168,85,247,0.2)]
+                        hover:shadow-[0_0_20px_rgba(168,85,247,0.4)]
+                        disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none"
+                    >
+                      {llmLoading ? <Loader2 size={14} className="animate-spin" /> : 'Ask AI'}
+                    </button>
+                  </div>
+
+                  {/* Response */}
+                  {llmLoading && (
+                    <div className="space-y-2 py-2">
+                      <div className="flex items-center gap-2 text-purple-400 text-[11px] font-bold">
+                        <Loader2 size={12} className="animate-spin" />
+                        Analyzing transaction with {llmStatus?.model || 'AI'}...
+                      </div>
+                      <Skeleton className="h-4 w-full" />
+                      <Skeleton className="h-4 w-4/5" />
+                      <Skeleton className="h-4 w-3/5" />
+                    </div>
+                  )}
+
+                  {llmResponse && !llmLoading && (
+                    <div className="space-y-2">
+                      <div className={clsx(
+                        'rounded-xl p-4 border text-[12px] leading-relaxed font-sans whitespace-pre-wrap',
+                        llmResponse.status === 'success'
+                          ? 'bg-purple-500/[0.04] border-purple-500/20 text-zinc-300'
+                          : llmResponse.status === 'unavailable'
+                          ? 'bg-amber-500/[0.04] border-amber-500/20 text-zinc-300'
+                          : 'bg-red-500/[0.04] border-red-500/20 text-zinc-400'
+                      )}>
+                        {/* Simple markdown-like rendering */}
+                        {llmResponse.response.split('\n').map((line, i) => {
+                          if (line.startsWith('## ')) return <div key={i} className="text-[13px] font-bold text-zinc-200 mt-3 mb-1">{line.slice(3)}</div>
+                          if (line.startsWith('**') && line.endsWith('**')) return <div key={i} className="font-bold text-zinc-200 mt-2">{line.slice(2, -2)}</div>
+                          if (line.startsWith('- ')) return <div key={i} className="flex gap-2 ml-2"><span className="text-purple-400 shrink-0">•</span><span>{line.slice(2)}</span></div>
+                          if (line.trim() === '') return <div key={i} className="h-2" />
+                          return <div key={i}>{line}</div>
+                        })}
+                      </div>
+
+                      {/* Meta */}
+                      <div className="flex items-center justify-between text-[9px] font-mono text-zinc-600 uppercase tracking-widest">
+                        <div className="flex items-center gap-3">
+                          <span>Model: {llmResponse.model_used}</span>
+                          {llmResponse.tokens_used && <span>· {llmResponse.tokens_used} tokens</span>}
+                        </div>
+                        <span className={clsx(
+                          'px-1.5 py-0.5 rounded',
+                          llmResponse.status === 'success' ? 'bg-emerald-500/10 text-emerald-400' :
+                          llmResponse.status === 'unavailable' ? 'bg-amber-500/10 text-amber-400' :
+                          'bg-red-500/10 text-red-400'
+                        )}>
+                          {llmResponse.status}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {!llmResponse && !llmLoading && (
+                    <div className="text-center py-4 text-[11px] text-zinc-600">
+                      <Info size={16} className="inline mr-1.5 opacity-50" />
+                      Select a quick action or type a question to investigate this transaction
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* ── Card 7: Model Feedback Loop ── */}
             {(feedbackAnim === 'pulsing' || (feedbackAnim === 'done' && impactSim)) && (
               <div className={clsx(card, 'transition-all duration-300', feedbackAnim === 'pulsing' ? 'border-amber-500/50 animate-pulse' : 'border-emerald-500/30')}>
                 {feedbackAnim === 'pulsing' ? (

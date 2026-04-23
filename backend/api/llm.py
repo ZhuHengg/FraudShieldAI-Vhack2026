@@ -11,12 +11,16 @@ import os
 import json
 import logging
 from typing import Optional
+from dotenv import load_dotenv
+
+# Ensure .env is loaded (the file is at project root, not backend/)
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 # Gemini client (lazy-initialized)
 _client = None
-_MODEL_ID = "gemini-2.0-flash"
+_MODEL_ID = "gemini-2.5-flash"
 
 
 def _get_client():

@@ -247,7 +247,7 @@ class InvestigateResponse(BaseModel):
     model_config = {"protected_namespaces": ()}
 
     response: str = Field(..., description="Natural-language analysis from the LLM")
-    model_used: str = Field("gemini-2.0-flash", description="Which model generated the response")
+    model_used: str = Field("gemini-2.5-flash", description="Which model generated the response")
     tokens_used: Optional[int] = None
     status: str = Field("success", description="success | error | unavailable")
 
