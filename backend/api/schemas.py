@@ -237,9 +237,19 @@ class RetrainResponse(BaseModel):
     message: str
 
 class InvestigateRequest(BaseModel):
-    """Free-form investigation query."""
-    query: str
-    context: Optional[dict] = None
+    """Free-form investigation query powered by LLM."""
+    query: str = Field(..., description="Analyst's question about the transaction")
+    transaction_id: Optional[str] = Field(None, description="Transaction ID to investigate (fetches full context)")
+    context: Optional[dict] = Field(None, description="Optional pre-built context dict (overrides DB lookup)")
+
+class InvestigateResponse(BaseModel):
+    """Response from the LLM investigation assistant."""
+    model_config = {"protected_namespaces": ()}
+
+    response: str = Field(..., description="Natural-language analysis from the LLM")
+    model_used: str = Field("gemini-2.0-flash", description="Which model generated the response")
+    tokens_used: Optional[int] = None
+    status: str = Field("success", description="success | error | unavailable")
 
 # ── Quarantine Schemas (V4 Step 8) ────────────────────────────────────────────
 

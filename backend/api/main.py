@@ -1,3 +1,5 @@
+import json
+import os
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,7 +9,8 @@ from api.schemas import (
     DashboardStats, TransactionRequest, RiskResponse, EnsembleSHAPResponse,
     TopFeature, TransactionLogCreate, TransactionLogResponse,
     AnalystFeedback, FeedbackStatsResponse, RetrainRequest, RetrainResponse,
-    QuarantineStatsResponse, QuarantineValidationResponse, CalibrationResponse
+    QuarantineStatsResponse, QuarantineValidationResponse, CalibrationResponse,
+    InvestigateRequest, InvestigateResponse
 )
 from api.inference import EnsembleEngine
 from api.database import get_db
@@ -359,6 +362,100 @@ async def trigger_retrain(request: RetrainRequest, db: Session = Depends(get_db)
         raise HTTPException(status_code=500, detail=f"Retraining failed: {str(e)}")
 
 
+@app.get("/api/v1/model/history")
+def get_model_history():
+    """List all saved ensemble config versions (for rollback)."""
+    try:
+        import glob
+        history_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            '..', 'models', 'ensemble', 'outputs', 'model', 'history'
+        )
+        history_dir = os.path.normpath(history_dir)
+
+        if not os.path.exists(history_dir):
+            return {"versions": [], "message": "No history yet - retrain at least once"}
+
+        files = sorted(glob.glob(os.path.join(history_dir, 'ensemble_config_*.json')), reverse=True)
+        versions = []
+        for f in files:
+            try:
+                with open(f) as fh:
+                    cfg = json.load(fh)
+                versions.append({
+                    "filename": os.path.basename(f),
+                    "timestamp": os.path.basename(f).replace('ensemble_config_', '').replace('.json', ''),
+                    "weights": cfg.get("weights"),
+                    "thresholds": cfg.get("thresholds"),
+                    "f1": cfg.get("validation_metrics", {}).get("f1"),
+                })
+            except Exception:
+                versions.append({"filename": os.path.basename(f), "error": "Could not parse"})
+
+        return {"versions": versions, "total": len(versions)}
+    except Exception as e:
+        logger.error(f"Model history failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/model/rollback")
+def rollback_model(filename: str):
+    """
+    Rollback to a previous ensemble config version.
+    Restores weights, thresholds, and hot-reloads the engine.
+    """
+    if engine is None:
+        raise HTTPException(status_code=503, detail="Engine not initialized")
+
+    history_dir = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        '..', 'models', 'ensemble', 'outputs', 'model', 'history'
+    )
+    rollback_path = os.path.normpath(os.path.join(history_dir, filename))
+
+    if not os.path.exists(rollback_path):
+        raise HTTPException(status_code=404, detail=f"Config version '{filename}' not found")
+
+    try:
+        with open(rollback_path) as f:
+            old_config = json.load(f)
+
+        # Save current as backup before rollback
+        from api.retrain import ENSEMBLE_CONFIG_PATH
+        config_path = os.path.normpath(ENSEMBLE_CONFIG_PATH)
+
+        from datetime import datetime as dt, timezone
+        ts = dt.now(timezone.utc).strftime('%Y%m%dT%H%M%S')
+        pre_rollback = os.path.join(history_dir, f'ensemble_config_{ts}_pre_rollback.json')
+        import shutil
+        if os.path.exists(config_path):
+            shutil.copy2(config_path, pre_rollback)
+
+        # Write the rolled-back config as current
+        with open(config_path, 'w') as f:
+            json.dump(old_config, f, indent=2)
+
+        # Hot-reload engine
+        engine.w_lgb = old_config['weights']['lgb']
+        engine.w_iso = old_config['weights']['iso']
+        engine.w_beh = old_config['weights']['beh']
+        engine.approve_threshold = old_config['thresholds']['optimal_threshold']
+        engine.flag_threshold = old_config['thresholds']['flag_threshold']
+        engine.ensemble_config = old_config
+        logger.info(f"Rolled back to {filename}")
+
+        return {
+            "status": "success",
+            "rolled_back_to": filename,
+            "weights": old_config['weights'],
+            "thresholds": old_config['thresholds'],
+            "pre_rollback_saved": os.path.basename(pre_rollback),
+        }
+    except Exception as e:
+        logger.error(f"Rollback failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Rollback failed: {str(e)}")
+
+
 @app.get("/api/v1/transactions/unlabeled", response_model=list[TransactionLogResponse])
 def get_unlabeled_transactions(limit: int = 50, db: Session = Depends(get_db)):
     """
@@ -481,3 +578,117 @@ def validate_quarantine(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Quarantine validation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Quarantine validation failed: {str(e)}")
+
+
+# ==============================================================================
+# LLM-POWERED INVESTIGATION ASSISTANT
+# ==============================================================================
+
+@app.post("/api/v1/investigate", response_model=InvestigateResponse)
+async def investigate(request: InvestigateRequest, db: Session = Depends(get_db)):
+    """
+    LLM-powered transaction investigation.
+    Gathers full context (risk scores, SHAP, history, quarantine status)
+    and sends to Gemini for natural-language analysis.
+    """
+    from api.llm import investigate_transaction
+
+    risk_response = None
+    shap_data = None
+    transaction_history = None
+    quarantine_info = None
+
+    # If a transaction_id is provided, gather context from DB + engine
+    if request.transaction_id:
+        # 1. Get transaction from DB
+        txn_row = db.query(TransactionLog).filter(
+            TransactionLog.transaction_id == request.transaction_id
+        ).first()
+
+        if txn_row:
+            # Build a risk_response-like dict from DB data
+            risk_response = {
+                'transaction_id': txn_row.transaction_id,
+                'risk_score': (txn_row.ml_risk_score or 0) * 100,
+                'risk_level': txn_row.action_taken or 'UNKNOWN',
+                'supervised_score': 0,
+                'unsupervised_score': 0,
+                'behavioral_score': 0,
+                'engine_mode': 'historical',
+                'active_models': ['lgb', 'iso', 'beh'],
+                'mule_flag': False,
+                'reasons': [],
+                'feature_snapshot': {
+                    'amount_vs_avg_ratio': txn_row.amount_vs_avg_ratio or 1.0,
+                    'ip_risk_score': txn_row.ip_risk_score or 0,
+                    'tx_count_24h': txn_row.tx_count_24h or 0,
+                    'session_duration_seconds': txn_row.session_duration_seconds or 0,
+                    'is_new_device': txn_row.is_new_device or 0,
+                    'country_mismatch': txn_row.country_mismatch or 0,
+                    'sender_fully_drained': txn_row.sender_account_fully_drained or 0,
+                    'is_new_recipient': txn_row.is_new_recipient or 0,
+                    'account_age_days': txn_row.account_age_days or 0,
+                    'is_proxy_ip': txn_row.is_proxy_ip or 0,
+                },
+            }
+
+            # Quarantine info
+            if txn_row.quarantine_status:
+                quarantine_info = {
+                    'quarantine_status': txn_row.quarantine_status,
+                    'quarantine_reason': txn_row.quarantine_reason,
+                }
+
+            # Recent history for this user
+            history_rows = db.query(TransactionLog).filter(
+                TransactionLog.user_hash == txn_row.user_hash,
+                TransactionLog.transaction_id != txn_row.transaction_id,
+            ).order_by(TransactionLog.transaction_id.desc()).limit(5).all()
+
+            if history_rows:
+                transaction_history = [
+                    {
+                        'transaction_id': h.transaction_id,
+                        'amount': h.amount,
+                        'ml_risk_score': h.ml_risk_score,
+                        'action_taken': h.action_taken,
+                    }
+                    for h in history_rows
+                ]
+
+    # If context was provided directly (e.g. from frontend), use that
+    if request.context and not risk_response:
+        risk_response = request.context
+
+    # Default if no context at all
+    if not risk_response:
+        risk_response = {
+            'transaction_id': request.transaction_id or 'unknown',
+            'risk_score': 0,
+            'risk_level': 'UNKNOWN',
+            'reasons': [],
+        }
+
+    # Call the LLM
+    result = await investigate_transaction(
+        query=request.query,
+        risk_response=risk_response,
+        shap_data=shap_data,
+        transaction_history=transaction_history,
+        quarantine_info=quarantine_info,
+    )
+
+    return InvestigateResponse(**result)
+
+
+@app.get("/api/v1/llm/status")
+def llm_status():
+    """Check if the LLM investigation assistant is available."""
+    import os
+    has_key = bool(os.environ.get("GEMINI_API_KEY"))
+    return {
+        "available": has_key,
+        "model": "gemini-2.0-flash",
+        "fallback": "rule-based-templates",
+        "note": "Set GEMINI_API_KEY in .env to enable LLM features" if not has_key else "LLM ready"
+    }

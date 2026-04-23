@@ -29,8 +29,11 @@ psycopg2-binary>=2.9
 # Utilities
 # ==============================
 python-dotenv==1.0.1
-sqlalchemy>=2.0.0
-psycopg2-binary>=2.9.0
+
+# ==============================
+# LLM (Gemini Investigation)
+# ==============================
+google-genai>=1.0
 
 # ==============================
 # Testing

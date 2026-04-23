@@ -154,3 +154,22 @@ class RecipientVelocityTracker:
                 "spike_detected": window.spike_detected,
                 "threshold": self.sender_threshold,
             }
+
+    def get_recipient_risk_score(self, recipient_hash: str) -> float:
+        """
+        Dynamic recipient risk score (0.0 - 1.0) based on velocity data.
+        Creates a feedback loop: Step 4 anti-mule data → Step 5 model scoring.
+
+        Scale:
+            0 senders in window → 0.0
+            threshold/2 senders → 0.5
+            threshold senders   → 1.0 (capped)
+        """
+        with self._lock:
+            if recipient_hash not in self._graph:
+                return 0.0
+            window = self._graph[recipient_hash]
+            self._prune_window(window, time.time())
+            unique = len(window.sender_times)
+            # Linear scale: 0 → 0.0, threshold → 1.0
+            return min(unique / max(self.sender_threshold, 1), 1.0)

@@ -321,6 +321,13 @@ class EnsembleEngine:
                 calibration_source="mule_network_detection",
             )
 
+        # ══ STEP 6b: Dynamic Recipient Risk (Velocity → Model feedback loop) ═══
+        dynamic_risk = self.velocity_tracker.get_recipient_risk_score(receiver_hash)
+        if dynamic_risk > 0:
+            # Blend dynamic velocity risk into the static recipient_risk_profile_score
+            static_risk = d.get('recipient_risk_profile_score', 0.0) or 0.0
+            d['recipient_risk_profile_score'] = min(max(static_risk, dynamic_risk), 1.0)
+
         # ══ STEP 5: High-Availability Model Scoring with Fallback ════════
         lgb_score = None
         iso_score = None

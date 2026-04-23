@@ -262,6 +262,18 @@ def run_retrain(engine, db: Session, min_samples: int = 50):
     }
 
     config_path = os.path.normpath(ENSEMBLE_CONFIG_PATH)
+
+    # Backup previous config before overwriting (V4 rollback support)
+    if os.path.exists(config_path):
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')
+        backup_dir = os.path.join(os.path.dirname(config_path), 'history')
+        os.makedirs(backup_dir, exist_ok=True)
+        backup_path = os.path.join(backup_dir, f'ensemble_config_{ts}.json')
+        import shutil
+        shutil.copy2(config_path, backup_path)
+        logger.info(f"Backed up previous config to: {backup_path}")
+
     with open(config_path, 'w') as f:
         json.dump(config, f, indent=2)
     logger.info(f"New ensemble config saved to: {config_path}")
